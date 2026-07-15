@@ -53,6 +53,9 @@ type Equipment = {
   certificateFileName?: string;
 };
 
+type EquipmentCategory = Equipment["category"];
+type InspectionBy = Equipment["inspectionBy"];
+
 
 type DashboardVesselRow = {
   id: string;
