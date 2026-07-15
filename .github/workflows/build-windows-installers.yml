@@ -1,0 +1,88 @@
+name: Build FSM Windows Installers
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "9.0.x"
+
+      - name: Build frontend
+        shell: pwsh
+        run: |
+          Set-Location frontend
+          npm install --registry=https://registry.npmjs.org/
+          npm run build
+          Set-Location ..
+
+          $wwwroot = "backend/src/FSM.Api/wwwroot"
+          if (Test-Path $wwwroot) {
+            Remove-Item $wwwroot -Recurse -Force
+          }
+
+          New-Item -ItemType Directory -Force -Path $wwwroot | Out-Null
+          Copy-Item "frontend/dist/*" $wwwroot -Recurse -Force
+
+      - name: Publish Windows application
+        shell: pwsh
+        run: |
+          dotnet restore backend/src/FSM.Api/FSM.Api.csproj
+
+          dotnet publish backend/src/FSM.Api/FSM.Api.csproj `
+            -c Release `
+            -r win-x64 `
+            --self-contained true `
+            -p:PublishSingleFile=false `
+            -p:PublishReadyToRun=false `
+            -o publish
+
+          New-Item -ItemType Directory -Force publish/Data | Out-Null
+          New-Item -ItemType Directory -Force publish/Documents/reports | Out-Null
+          New-Item -ItemType Directory -Force publish/Documents/certificates | Out-Null
+          New-Item -ItemType Directory -Force publish/Backups | Out-Null
+          New-Item -ItemType Directory -Force publish/Logs | Out-Null
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build Office installer
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+            /DMyEdition=Office `
+            /DOutputBase=FleetSafetyManager_Office_Setup `
+            installer/FleetSafetyManager.iss
+
+      - name: Build Ship installer
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+            /DMyEdition=Ship `
+            /DOutputBase=FleetSafetyManager_Ship_Setup `
+            installer/FleetSafetyManager.iss
+
+      - name: Upload installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: FleetSafetyManager-Windows-Installers
+          path: installer/output/*.exe
+          if-no-files-found: error
+          retention-days: 30
