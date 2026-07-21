@@ -254,7 +254,7 @@ function App() {
   return (
     <div className="application">
       <header className="topbar">
-        <div><strong>Fleet Safety Manager</strong><span>Version RC17</span></div>
+        <div><strong>Fleet Safety Manager</strong><span>Version RC18</span></div>
         <div className="session">
           <span>{user.fullName} · {user.role}</span>
           {currentVessel &&

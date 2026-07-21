@@ -32,9 +32,9 @@ jobs:
           npm run build
 
           $frontendBundle = Get-Content "dist/assets/*.js" -Raw
-          if ($frontendBundle -notmatch "Version RC17" -or
+          if ($frontendBundle -notmatch "Version RC18" -or
               $frontendBundle -notmatch "Synchronization") {
-            throw "The frontend bundle does not contain the RC17 UI changes."
+            throw "The frontend bundle does not contain the RC18 UI changes."
           }
 
           Set-Location ..

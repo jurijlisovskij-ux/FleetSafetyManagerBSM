@@ -1,5 +1,3 @@
-Directory.SetCurrentDirectory(AppContext.BaseDirectory);
-
 using System.Text;
 using FSM.Api;
 using FSM.Api.Auth;
@@ -8,6 +6,8 @@ using FSM.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
+
+Directory.SetCurrentDirectory(AppContext.BaseDirectory);
 
 var builder = WebApplication.CreateBuilder(args);
 
