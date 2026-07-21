@@ -7,7 +7,7 @@
 #endif
 
 #define AppName "Fleet Safety Manager"
-#define AppVersion "1.0.0-RC2"
+#define AppVersion "1.0.0-RC17"
 #define ServiceName "FleetSafetyManager"
 
 [Setup]

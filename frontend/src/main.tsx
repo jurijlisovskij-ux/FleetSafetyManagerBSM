@@ -254,7 +254,7 @@ function App() {
   return (
     <div className="application">
       <header className="topbar">
-        <div><strong>Fleet Safety Manager</strong><span>Native RC2</span></div>
+        <div><strong>Fleet Safety Manager</strong><span>Version RC17</span></div>
         <div className="session">
           <span>{user.fullName} · {user.role}</span>
           {currentVessel &&
@@ -452,6 +452,13 @@ function App() {
             </div>
             <div className="workspace-actions">
               <span className="muted">Equipment Register</span>
+              <button
+                type="button"
+                disabled
+                title="Synchronization is not configured in this build."
+              >
+                Synchronization
+              </button>
               <button
                 onClick={() => setShowVesselProfile(true)}
               >

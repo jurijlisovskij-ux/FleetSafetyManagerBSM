@@ -30,6 +30,13 @@ jobs:
           Set-Location frontend
           npm install --registry=https://registry.npmjs.org/
           npm run build
+
+          $frontendBundle = Get-Content "dist/assets/*.js" -Raw
+          if ($frontendBundle -notmatch "Version RC17" -or
+              $frontendBundle -notmatch "Synchronization") {
+            throw "The frontend bundle does not contain the RC17 UI changes."
+          }
+
           Set-Location ..
 
           $wwwroot = "backend/src/FSM.Api/wwwroot"

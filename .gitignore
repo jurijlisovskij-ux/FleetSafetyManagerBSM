@@ -1,0 +1,30 @@
+# Frontend dependencies and build output
+**/node_modules/
+**/dist/
+**/.npm-cache/
+*.tsbuildinfo
+
+# .NET build and publish output
+**/bin/
+**/obj/
+/publish/
+
+# Installer output
+/installer/output/
+
+# Local runtime data
+/Data/
+/Documents/
+/Backups/
+/Logs/
+
+# Editor, operating-system, and local environment files
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+.DS_Store
+Thumbs.db
+.env
+.env.local
