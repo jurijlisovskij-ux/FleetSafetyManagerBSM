@@ -27,9 +27,19 @@ jobs:
       - name: Build frontend
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+          Write-Host "Building frontend from commit $env:GITHUB_SHA"
+
           Set-Location frontend
-          npm install --registry=https://registry.npmjs.org/
+          npm ci --registry=https://registry.npmjs.org/
+          if ($LASTEXITCODE -ne 0) {
+            throw "npm ci failed with exit code $LASTEXITCODE."
+          }
+
           npm run build
+          if ($LASTEXITCODE -ne 0) {
+            throw "Frontend build failed with exit code $LASTEXITCODE."
+          }
 
           $frontendBundle = Get-Content "dist/assets/*.js" -Raw
           if ($frontendBundle -notmatch "Version RC18" -or
