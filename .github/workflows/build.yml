@@ -1,6 +1,10 @@
 name: Build FSM Windows Installers
 
 on:
+  push:
+    branches:
+      - main
+
   workflow_dispatch:
 
 permissions:
