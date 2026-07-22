@@ -34,16 +34,24 @@ type Vessel = {
   displayName: string;
 };
 
+type EquipmentCategory =
+  | "LSA"
+  | "FFE"
+  | "Medicine"
+  | "Radio & Navigation";
+
+type InspectionBy = "Crew" | "Service Company";
+
 type Equipment = {
   id: string;
   vesselId: string;
-  category: "LSA" | "FFE" | "Medicine" | "Radio & Navigation";
+  category: EquipmentCategory;
   equipmentName: string;
   maker?: string;
   model?: string;
   serialNumber?: string;
   quantity: number;
-  inspectionBy: "Crew" | "Service Company";
+  inspectionBy: InspectionBy;
   expiryDate?: string;
   status: "OK" | "Soon" | "Overdue";
   remarks?: string;
@@ -52,9 +60,6 @@ type Equipment = {
   certificateAvailable: boolean;
   certificateFileName?: string;
 };
-
-type EquipmentCategory = Equipment["category"];
-type InspectionBy = Equipment["inspectionBy"];
 
 
 type DashboardVesselRow = {

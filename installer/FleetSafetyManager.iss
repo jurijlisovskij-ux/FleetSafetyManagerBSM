@@ -78,19 +78,25 @@ procedure CurStepChanged(CurStep: TSetupStep);
 var
   ConfigPath: string;
   ConfigText: AnsiString;
+  UpdatedConfigText: String;
 begin
   if CurStep = ssPostInstall then
   begin
     ConfigPath := ExpandConstant('{app}\appsettings.json');
     if LoadStringFromFile(ConfigPath, ConfigText) then
     begin
+      UpdatedConfigText := String(ConfigText);
       StringChangeEx(
-        ConfigText,
+        UpdatedConfigText,
         '"Edition": "Office"',
         '"Edition": "{#MyEdition}"',
         True
       );
-      SaveStringToFile(ConfigPath, ConfigText, False);
+      SaveStringToFile(
+        ConfigPath,
+        AnsiString(UpdatedConfigText),
+        False
+      );
     end;
   end;
 end;

@@ -1,0 +1,8 @@
+/.git export-ignore
+/frontend/node_modules export-ignore
+/frontend/.npm-cache export-ignore
+/frontend/dist export-ignore
+/backend/**/bin export-ignore
+/backend/**/obj export-ignore
+/publish export-ignore
+/installer/output export-ignore

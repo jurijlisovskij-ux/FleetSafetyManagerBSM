@@ -3,6 +3,7 @@
 **/dist/
 **/.npm-cache/
 *.tsbuildinfo
+/backend/src/FSM.Api/wwwroot/
 
 # .NET build and publish output
 **/bin/
