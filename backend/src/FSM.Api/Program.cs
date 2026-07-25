@@ -82,6 +82,8 @@ app.MapFallbackToFile("index.html");
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<FsmDbContext>();
+    await db.Database.EnsureCreatedAsync();
+    await db.Database.MigrateAsync();
     await SeedData.InitializeAsync(db);
 }
 

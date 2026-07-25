@@ -1,5 +1,7 @@
 using System.Security.Claims;
 using FSM.Api.Services;
+using FSM.Domain.Entities;
+using FSM.Domain.Enums;
 using FSM.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -14,6 +16,52 @@ public sealed class DocumentsController(
     FsmDbContext db,
     DocumentStorageService storage) : ControllerBase
 {
+    [HttpGet]
+    public async Task<IActionResult> List(
+        Guid equipmentId,
+        CancellationToken cancellationToken)
+    {
+        var equipment = await db.Equipment
+            .AsNoTracking()
+            .SingleOrDefaultAsync(
+                x => x.Id == equipmentId,
+                cancellationToken);
+
+        if (equipment is null)
+            return NotFound();
+
+        if (!await CanAccessVesselAsync(
+            equipment.VesselId,
+            cancellationToken))
+        {
+            return Forbid();
+        }
+
+        var documents = await db.EquipmentDocuments
+            .AsNoTracking()
+            .Where(x => x.EquipmentId == equipmentId)
+            .OrderBy(x => x.DocumentType)
+            .ThenByDescending(x => x.IsCurrent)
+            .ThenByDescending(x => x.CreatedUtc)
+            .Select(x => new
+            {
+                x.Id,
+                Type = x.DocumentType.ToString(),
+                x.FileName,
+                x.IssueDate,
+                x.ExpiryDate,
+                x.DocumentNumber,
+                x.Issuer,
+                x.Remarks,
+                x.IsCurrent,
+                x.CreatedUtc,
+                x.ArchivedUtc
+            })
+            .ToListAsync(cancellationToken);
+
+        return Ok(documents);
+    }
+
     [HttpPost("{type:regex(^(report|certificate)$)}")]
     [RequestSizeLimit(26L * 1024L * 1024L)]
     public async Task<IActionResult> Upload(
@@ -71,6 +119,38 @@ public sealed class DocumentsController(
                 Path.GetFileName(file.FileName);
         }
 
+        var documentType = type == "report"
+            ? EquipmentDocumentType.ServiceReport
+            : EquipmentDocumentType.Certificate;
+        var now = DateTime.UtcNow;
+        var currentDocuments = await db.EquipmentDocuments
+            .Where(x =>
+                x.EquipmentId == equipmentId &&
+                x.DocumentType == documentType &&
+                x.IsCurrent)
+            .ToListAsync(cancellationToken);
+
+        foreach (var current in currentDocuments)
+        {
+            current.IsCurrent = false;
+            current.ArchivedUtc = now;
+        }
+
+        db.EquipmentDocuments.Add(new EquipmentDocument
+        {
+            Id = Guid.NewGuid(),
+            EquipmentId = equipmentId,
+            DocumentType = documentType,
+            FileName = Path.GetFileName(file.FileName),
+            StoredFileName = newPath,
+            MimeType = "application/pdf",
+            FileSize = file.Length,
+            ExpiryDate = equipment.ExpiryDate,
+            Remarks = equipment.Remarks,
+            IsCurrent = true,
+            CreatedUtc = now
+        });
+
         try
         {
             await db.SaveChangesAsync(cancellationToken);
@@ -79,14 +159,6 @@ public sealed class DocumentsController(
         {
             storage.DeleteIfExists(newPath);
             throw;
-        }
-
-        if (!string.Equals(
-            oldPath,
-            newPath,
-            StringComparison.Ordinal))
-        {
-            storage.DeleteIfExists(oldPath);
         }
 
         return Ok(new
@@ -118,13 +190,27 @@ public sealed class DocumentsController(
             return Forbid();
         }
 
-        var relativePath = type == "report"
-            ? equipment.CurrentReportPath
-            : equipment.CurrentCertificatePath;
+        var documentType = type == "report"
+            ? EquipmentDocumentType.ServiceReport
+            : EquipmentDocumentType.Certificate;
+        var currentDocument = await db.EquipmentDocuments
+            .AsNoTracking()
+            .Where(x =>
+                x.EquipmentId == equipmentId &&
+                x.DocumentType == documentType &&
+                x.IsCurrent)
+            .OrderByDescending(x => x.CreatedUtc)
+            .FirstOrDefaultAsync(cancellationToken);
 
-        var originalName = type == "report"
-            ? equipment.CurrentReportFileName
-            : equipment.CurrentCertificateFileName;
+        var relativePath = currentDocument?.StoredFileName ??
+            (type == "report"
+                ? equipment.CurrentReportPath
+                : equipment.CurrentCertificatePath);
+
+        var originalName = currentDocument?.FileName ??
+            (type == "report"
+                ? equipment.CurrentReportFileName
+                : equipment.CurrentCertificateFileName);
 
         if (string.IsNullOrWhiteSpace(relativePath))
             return NotFound();
@@ -177,8 +263,25 @@ public sealed class DocumentsController(
             equipment.CurrentCertificateFileName = null;
         }
 
+        var documentType = type == "report"
+            ? EquipmentDocumentType.ServiceReport
+            : EquipmentDocumentType.Certificate;
+        var currentDocuments = await db.EquipmentDocuments
+            .Where(x =>
+                x.EquipmentId == equipmentId &&
+                x.DocumentType == documentType &&
+                x.IsCurrent)
+            .ToListAsync(cancellationToken);
+        db.EquipmentDocuments.RemoveRange(currentDocuments);
+
         await db.SaveChangesAsync(cancellationToken);
-        storage.DeleteIfExists(oldPath);
+        foreach (var path in currentDocuments
+            .Select(x => x.StoredFileName)
+            .Append(oldPath)
+            .Distinct(StringComparer.Ordinal))
+        {
+            storage.DeleteIfExists(path);
+        }
 
         return NoContent();
     }

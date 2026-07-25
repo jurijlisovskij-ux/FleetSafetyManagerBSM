@@ -20,18 +20,22 @@ public sealed class DocumentStorageService(IConfiguration configuration)
     {
         Validate(file);
 
+        _ = imoNumber;
+
         var folderName = documentType switch
         {
-            "report" => "reports",
-            "certificate" => "certificates",
+            "report" => "ServiceReport",
+            "certificate" => "Certificate",
             _ => throw new ArgumentOutOfRangeException(nameof(documentType))
         };
 
-        var relativeDirectory = Path.Combine(folderName, imoNumber);
+        var relativeDirectory = Path.Combine(
+            equipmentId.ToString("N"),
+            folderName);
         var absoluteDirectory = Path.Combine(rootPath, relativeDirectory);
         Directory.CreateDirectory(absoluteDirectory);
 
-        var finalName = $"{equipmentId:N}.pdf";
+        var finalName = $"{Guid.NewGuid():N}.pdf";
         var finalPath = Path.Combine(absoluteDirectory, finalName);
         var temporaryPath = Path.Combine(
             absoluteDirectory,
@@ -50,17 +54,19 @@ public sealed class DocumentStorageService(IConfiguration configuration)
 
         try
         {
-            await using var input = File.OpenRead(temporaryPath);
-            var signature = new byte[5];
-            var bytesRead = await input.ReadAsync(
-                signature,
-                cancellationToken);
-
-            if (bytesRead != 5 ||
-                Encoding.ASCII.GetString(signature) != "%PDF-")
             {
-                throw new InvalidDataException(
-                    "The selected file is not a valid PDF.");
+                await using var input = File.OpenRead(temporaryPath);
+                var signature = new byte[5];
+                var bytesRead = await input.ReadAsync(
+                    signature,
+                    cancellationToken);
+
+                if (bytesRead != 5 ||
+                    Encoding.ASCII.GetString(signature) != "%PDF-")
+                {
+                    throw new InvalidDataException(
+                        "The selected file is not a valid PDF.");
+                }
             }
 
             File.Move(temporaryPath, finalPath, overwrite: true);

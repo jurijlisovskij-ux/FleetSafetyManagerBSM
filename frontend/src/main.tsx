@@ -41,6 +41,19 @@ type EquipmentCategory =
   | "Radio & Navigation";
 
 type InspectionBy = "Crew" | "Service Company";
+type EquipmentSortField =
+  | "equipmentName"
+  | "category"
+  | "expiryDate"
+  | "status";
+type SortDirection = "asc" | "desc";
+type NavigationView =
+  | "dashboard"
+  | "equipment"
+  | "medical"
+  | "administration"
+  | "synchronization"
+  | "profile";
 
 type Equipment = {
   id: string;
@@ -59,6 +72,20 @@ type Equipment = {
   reportFileName?: string;
   certificateAvailable: boolean;
   certificateFileName?: string;
+};
+
+type EquipmentDocument = {
+  id: string;
+  type: "Certificate" | "ServiceReport";
+  fileName: string;
+  issueDate?: string;
+  expiryDate?: string;
+  documentNumber?: string;
+  issuer?: string;
+  remarks?: string;
+  isCurrent: boolean;
+  createdUtc: string;
+  archivedUtc?: string;
 };
 
 
@@ -159,10 +186,46 @@ function App() {
     useState(false);
   const [showCopyEquipment, setShowCopyEquipment] =
     useState(false);
-  const [collapsed, setCollapsed] =
-    useState<Set<Equipment["category"]>>(new Set());
+  const [equipmentSearch, setEquipmentSearch] = useState("");
+  const [equipmentStatusFilter, setEquipmentStatusFilter] =
+    useState("All");
+  const [equipmentCategoryFilter, setEquipmentCategoryFilter] =
+    useState("All");
+  const [equipmentResponsibleFilter, setEquipmentResponsibleFilter] =
+    useState("All");
+  const [equipmentSortField, setEquipmentSortField] =
+    useState<EquipmentSortField>("equipmentName");
+  const [equipmentSortDirection, setEquipmentSortDirection] =
+    useState<SortDirection>("asc");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [navigationView, setNavigationView] =
+    useState<NavigationView>("dashboard");
+  const [detailEquipmentId, setDetailEquipmentId] =
+    useState<string | null>(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => sessionStorage.getItem("fsm-sidebar-collapsed") === "true",
+  );
+
+  useEffect(() => {
+    sessionStorage.setItem(
+      "fsm-sidebar-collapsed",
+      String(sidebarCollapsed),
+    );
+  }, [sidebarCollapsed]);
+
+  useEffect(() => {
+    function handlePopState(event: PopStateEvent) {
+      const equipmentId =
+        typeof event.state?.equipmentDetailsId === "string"
+          ? event.state.equipmentDetailsId
+          : null;
+      setDetailEquipmentId(equipmentId);
+    }
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   useEffect(() => {
     if (!user) return;
@@ -201,19 +264,179 @@ function App() {
         setEquipment(items);
         setSelected(items[0] ?? null);
         setSelectedForRequest(new Set());
+        setEquipmentSearch("");
+        setEquipmentStatusFilter("All");
+        setEquipmentCategoryFilter("All");
+        setEquipmentResponsibleFilter("All");
       })
       .catch(error => setError((error as Error).message))
       .finally(() => setBusy(false));
   }, [user, currentVessel]);
 
-  const groups = useMemo(
-    () =>
-      categories.map(category => ({
-        category,
-        items: equipment.filter(item => item.category === category),
-      })),
+  const equipmentStatusOptions = useMemo(
+    () => [...new Set(equipment.map(item => item.status))].sort(),
     [equipment],
   );
+
+  const equipmentCategoryOptions = useMemo(
+    () => [...new Set(equipment.map(item => item.category))].sort(),
+    [equipment],
+  );
+
+  const equipmentResponsibleOptions = useMemo(
+    () => [...new Set(equipment.map(item => item.inspectionBy))].sort(),
+    [equipment],
+  );
+
+  const visibleEquipment = useMemo(() => {
+    const search = equipmentSearch.trim().toLocaleLowerCase();
+    const statusRank: Record<Equipment["status"], number> = {
+      OK: 0,
+      Soon: 1,
+      Overdue: 2,
+    };
+
+    return equipment
+      .filter(item => {
+        const searchableValues = [
+          item.equipmentName,
+          item.category,
+          item.maker,
+          item.model,
+          item.serialNumber,
+        ];
+
+        return (
+          (!search ||
+            searchableValues.some(value =>
+              value?.toLocaleLowerCase().includes(search),
+            )) &&
+          (equipmentStatusFilter === "All" ||
+            item.status === equipmentStatusFilter) &&
+          (equipmentCategoryFilter === "All" ||
+            item.category === equipmentCategoryFilter) &&
+          (equipmentResponsibleFilter === "All" ||
+            item.inspectionBy === equipmentResponsibleFilter)
+        );
+      })
+      .sort((left, right) => {
+        let comparison = 0;
+
+        if (equipmentSortField === "expiryDate") {
+          const leftDate = left.expiryDate ?? "9999-12-31";
+          const rightDate = right.expiryDate ?? "9999-12-31";
+          comparison = leftDate.localeCompare(rightDate);
+        } else if (equipmentSortField === "status") {
+          comparison = statusRank[left.status] - statusRank[right.status];
+        } else {
+          comparison = left[equipmentSortField].localeCompare(
+            right[equipmentSortField],
+          );
+        }
+
+        if (comparison === 0)
+          comparison = left.equipmentName.localeCompare(right.equipmentName);
+
+        return equipmentSortDirection === "asc"
+          ? comparison
+          : -comparison;
+      });
+  }, [
+    equipment,
+    equipmentSearch,
+    equipmentStatusFilter,
+    equipmentCategoryFilter,
+    equipmentResponsibleFilter,
+    equipmentSortField,
+    equipmentSortDirection,
+  ]);
+
+  const equipmentQueryActive =
+    equipmentSearch.trim() !== "" ||
+    equipmentStatusFilter !== "All" ||
+    equipmentCategoryFilter !== "All" ||
+    equipmentResponsibleFilter !== "All";
+
+  const detailEquipment =
+    equipment.find(item => item.id === detailEquipmentId) ?? null;
+
+  function sortEquipment(field: EquipmentSortField) {
+    if (equipmentSortField === field) {
+      setEquipmentSortDirection(current =>
+        current === "asc" ? "desc" : "asc",
+      );
+      return;
+    }
+
+    setEquipmentSortField(field);
+    setEquipmentSortDirection("asc");
+  }
+
+  function sortIndicator(field: EquipmentSortField) {
+    if (equipmentSortField !== field) return "";
+    return equipmentSortDirection === "asc" ? " ↑" : " ↓";
+  }
+
+  function closeWorkspace() {
+    if (detailEquipmentId) {
+      window.history.replaceState(
+        {},
+        "",
+        `${window.location.pathname}${window.location.search}`,
+      );
+    }
+    setDetailEquipmentId(null);
+    setCurrentVessel(null);
+    setEquipment([]);
+    setSelected(null);
+    setSelectedForRequest(new Set());
+    setShowServiceRequest(false);
+    setShowInspectionList(false);
+    setShowAddEquipment(false);
+    setShowVesselProfile(false);
+    setShowCopyEquipment(false);
+  }
+
+  function navigate(view: NavigationView) {
+    if (view !== "equipment") closeWorkspace();
+    else if (detailEquipmentId) {
+      window.history.replaceState(
+        {},
+        "",
+        `${window.location.pathname}${window.location.search}`,
+      );
+      setDetailEquipmentId(null);
+    }
+    setShowUserAdministration(false);
+    setNavigationView(view);
+    if (view === "administration")
+      setShowUserAdministration(true);
+  }
+
+  function signOut() {
+    window.history.replaceState(
+      {},
+      "",
+      `${window.location.pathname}${window.location.search}`,
+    );
+    setUser(null);
+    setVessels([]);
+    setDashboard(null);
+    setDashboardFilter("All");
+    closeWorkspace();
+    setShowUserAdministration(false);
+    setNavigationView("dashboard");
+  }
+
+  function openEquipmentDetails(item: Equipment) {
+    setSelected(item);
+    setDetailEquipmentId(item.id);
+    window.history.pushState(
+      { equipmentDetailsId: item.id },
+      "",
+      `#equipment/${item.id}`,
+    );
+  }
 
   if (!user) {
     return (
@@ -265,10 +488,8 @@ function App() {
           {currentVessel &&
             <button
               onClick={() => {
-                setCurrentVessel(null);
-                setEquipment([]);
-                setSelected(null);
-                setSelectedForRequest(new Set());
+                closeWorkspace();
+                setNavigationView("dashboard");
               }}
             >
               Dashboard
@@ -281,25 +502,36 @@ function App() {
               Users
             </button>}
           <button onClick={() => {
-            setUser(null);
-            setVessels([]);
-            setDashboard(null);
-            setDashboardFilter("All");
-            setCurrentVessel(null);
-            setEquipment([]);
-            setSelected(null);
-            setSelectedForRequest(new Set());
-            setShowServiceRequest(false);
-            setShowInspectionList(false);
-            setShowAddEquipment(false);
-            setShowVesselProfile(false);
-            setShowUserAdministration(false);
-            setShowCopyEquipment(false);
+            signOut();
           }}>Sign Out</button>
         </div>
       </header>
 
-      {!currentVessel ? (
+      <div className={`application-body ${sidebarCollapsed ? "sidebar-collapsed" : ""}`}>
+        <nav className="sidebar" aria-label="Main navigation">
+          <button
+            className="sidebar-toggle"
+            type="button"
+            onClick={() => setSidebarCollapsed(value => !value)}
+            aria-label={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            <span aria-hidden="true">{sidebarCollapsed ? "»" : "«"}</span>
+            {!sidebarCollapsed && <span>Collapse</span>}
+          </button>
+          <SidebarItem icon="⌂" label="Dashboard" active={navigationView === "dashboard" && !currentVessel} collapsed={sidebarCollapsed} onClick={() => navigate("dashboard")} />
+          <SidebarItem icon="☷" label="Equipment List" active={navigationView === "equipment" || !!currentVessel} collapsed={sidebarCollapsed} onClick={() => navigate("equipment")} />
+          <SidebarItem icon="✚" label="Medical Chest" active={navigationView === "medical"} collapsed={sidebarCollapsed} onClick={() => navigate("medical")} />
+          {user.role === "OfficeAdmin" &&
+            <SidebarItem icon="⚙" label="Administration" active={navigationView === "administration"} collapsed={sidebarCollapsed} onClick={() => navigate("administration")} />}
+          <SidebarItem icon="⟳" label="Synchronization" active={navigationView === "synchronization"} collapsed={sidebarCollapsed} onClick={() => navigate("synchronization")} />
+          <div className="sidebar-spacer" />
+          <SidebarItem icon="●" label="My Profile" active={navigationView === "profile"} collapsed={sidebarCollapsed} onClick={() => navigate("profile")} />
+          <SidebarItem icon="↪" label="Sign Out" collapsed={sidebarCollapsed} onClick={signOut} />
+        </nav>
+
+        <div className="page-content">
+      {navigationView === "dashboard" && !currentVessel ? (
         <main className="dashboard-page">
           <div className="dashboard-heading">
             <div>
@@ -358,7 +590,10 @@ function App() {
                           key={row.id}
                           onClick={() => {
                             const vessel = vessels.find(item => item.id === row.id);
-                            if (vessel) setCurrentVessel(vessel);
+                            if (vessel) {
+                              setCurrentVessel(vessel);
+                              setNavigationView("equipment");
+                            }
                           }}
                         >
                           <td>
@@ -412,7 +647,10 @@ function App() {
                         key={item.id}
                         onClick={() => {
                           const vessel = vessels.find(value => value.id === item.vesselId);
-                          if (vessel) setCurrentVessel(vessel);
+                          if (vessel) {
+                            setCurrentVessel(vessel);
+                            setNavigationView("equipment");
+                          }
                         }}
                       >
                         <td>{item.vesselName}</td>
@@ -428,30 +666,31 @@ function App() {
             </div>
           </section>
         </main>
-      ) : (
+      ) : navigationView === "equipment" &&
+          currentVessel &&
+          detailEquipment ? (
+        <EquipmentDetailsPage
+          item={detailEquipment}
+          vessel={currentVessel}
+          token={user.token}
+          onBack={() => window.history.back()}
+        />
+      ) : navigationView === "equipment" && currentVessel ? (
         <main className="workspace">
           <div className="workspace-heading">
             <div>
               <button
                 className="back-button"
                 onClick={() => {
-                  setCurrentVessel(null);
-                  setEquipment([]);
-                  setSelected(null);
-                  setSelectedForRequest(new Set());
-                  setShowServiceRequest(false);
-            setShowInspectionList(false);
-            setShowAddEquipment(false);
-            setShowVesselProfile(false);
-            setShowUserAdministration(false);
-            setShowCopyEquipment(false);
+                  closeWorkspace();
+                  setNavigationView("dashboard");
                 }}
               >
                 ← Assigned Vessels
               </button>
-              <h1>{currentVessel.vesselName}</h1>
+              <h1>Equipment List</h1>
               <p className="muted">
-                IMO {currentVessel.imoNumber}
+                {currentVessel.vesselName} · IMO {currentVessel.imoNumber}
                 {currentVessel.flag ? ` · ${currentVessel.flag}` : ""}
               </p>
             </div>
@@ -500,44 +739,90 @@ function App() {
           {busy ? (
             <div className="loading">Loading equipment...</div>
           ) : (
+            <>
+            <section className="equipment-toolbar" aria-label="Equipment filters">
+              <label className="equipment-search">
+                Search
+                <input
+                  type="search"
+                  value={equipmentSearch}
+                  placeholder="Search equipment"
+                  onChange={event => setEquipmentSearch(event.target.value)}
+                />
+              </label>
+              <label>
+                Status
+                <select
+                  value={equipmentStatusFilter}
+                  onChange={event => setEquipmentStatusFilter(event.target.value)}
+                >
+                  <option>All</option>
+                  {equipmentStatusOptions.map(value =>
+                    <option key={value}>{value}</option>)}
+                </select>
+              </label>
+              <label>
+                Category
+                <select
+                  value={equipmentCategoryFilter}
+                  onChange={event => setEquipmentCategoryFilter(event.target.value)}
+                >
+                  <option>All</option>
+                  {equipmentCategoryOptions.map(value =>
+                    <option key={value}>{value}</option>)}
+                </select>
+              </label>
+              <label>
+                Responsible
+                <select
+                  value={equipmentResponsibleFilter}
+                  onChange={event => setEquipmentResponsibleFilter(event.target.value)}
+                >
+                  <option>All</option>
+                  {equipmentResponsibleOptions.map(value =>
+                    <option key={value}>{value}</option>)}
+                </select>
+              </label>
+              <span className="equipment-result-count">
+                {visibleEquipment.length} of {equipment.length} records
+              </span>
+            </section>
             <div className="workspace-grid">
               <section className="register">
                 <div className="table-scroll">
-                  <table>
+                  <table className="equipment-table">
                     <thead>
                       <tr>
                         <th className="select-column">Select</th>
-                        <th>Equipment</th>
-                        <th>Maker</th>
+                        <th aria-sort={equipmentSortField === "status" ? equipmentSortDirection === "asc" ? "ascending" : "descending" : "none"}>
+                          <button className="sort-button" data-sort-field="status" type="button" onClick={() => sortEquipment("status")}>
+                            Status{sortIndicator("status")}
+                          </button>
+                        </th>
+                        <th aria-sort={equipmentSortField === "equipmentName" ? equipmentSortDirection === "asc" ? "ascending" : "descending" : "none"}>
+                          <button className="sort-button" data-sort-field="equipmentName" type="button" onClick={() => sortEquipment("equipmentName")}>
+                            Equipment{sortIndicator("equipmentName")}
+                          </button>
+                        </th>
+                        <th aria-sort={equipmentSortField === "category" ? equipmentSortDirection === "asc" ? "ascending" : "descending" : "none"}>
+                          <button className="sort-button" data-sort-field="category" type="button" onClick={() => sortEquipment("category")}>
+                            Category{sortIndicator("category")}
+                          </button>
+                        </th>
+                        <th>Manufacturer</th>
                         <th>Model</th>
-                        <th>Qty</th>
-                        <th>Inspection By</th>
-                        <th>Expiry Date</th>
-                        <th>Status</th>
+                        <th>Serial Number</th>
+                        <th aria-sort={equipmentSortField === "expiryDate" ? equipmentSortDirection === "asc" ? "ascending" : "descending" : "none"}>
+                          <button className="sort-button" data-sort-field="expiryDate" type="button" onClick={() => sortEquipment("expiryDate")}>
+                            Due Date{sortIndicator("expiryDate")}
+                          </button>
+                        </th>
+                        <th>Responsible</th>
+                        <th>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {groups.map(group => (
-                        <React.Fragment key={group.category}>
-                          <tr
-                            className="category-row"
-                            onClick={() =>
-                              setCollapsed(current => {
-                                const next = new Set(current);
-                                next.has(group.category)
-                                  ? next.delete(group.category)
-                                  : next.add(group.category);
-                                return next;
-                              })
-                            }
-                          >
-                            <td colSpan={8}>
-                              {collapsed.has(group.category) ? "▶" : "▼"}{" "}
-                              {group.category}
-                            </td>
-                          </tr>
-                          {!collapsed.has(group.category) &&
-                            group.items.map(item => (
+                      {visibleEquipment.map(item => (
                               <tr
                                 key={item.id}
                                 className={
@@ -565,21 +850,45 @@ function App() {
                                     }}
                                   />
                                 </td>
-                                <td>{item.equipmentName}</td>
-                                <td>{item.maker || "—"}</td>
-                                <td>{item.model || "—"}</td>
-                                <td>{item.quantity}</td>
-                                <td>{item.inspectionBy}</td>
-                                <td>{formatDate(item.expiryDate)}</td>
                                 <td>
                                   <span className={`status status-${item.status.toLowerCase()}`}>
-                                    {item.status}
+                                    {item.status.toUpperCase()}
                                   </span>
                                 </td>
+                                <td>{item.equipmentName}</td>
+                                <td>{item.category}</td>
+                                <td>{item.maker || "—"}</td>
+                                <td>{item.model || "—"}</td>
+                                <td>{item.serialNumber || "—"}</td>
+                                <td>{formatDate(item.expiryDate)}</td>
+                                <td>{item.inspectionBy}</td>
+                                <td>
+                                  <button
+                                    type="button"
+                                    className="table-action"
+                                    onClick={event => {
+                                      event.stopPropagation();
+                                      openEquipmentDetails(item);
+                                    }}
+                                  >
+                                    View
+                                  </button>
+                                </td>
                               </tr>
-                            ))}
-                        </React.Fragment>
                       ))}
+                      {equipment.length === 0 &&
+                        <tr className="table-state-row">
+                          <td colSpan={10}>No equipment exists for this vessel.</td>
+                        </tr>}
+                      {equipment.length > 0 &&
+                        visibleEquipment.length === 0 &&
+                        <tr className="table-state-row">
+                          <td colSpan={10}>
+                            {equipmentQueryActive
+                              ? "No equipment matches the current search and filters."
+                              : "No equipment records to display."}
+                          </td>
+                        </tr>}
                     </tbody>
                   </table>
                 </div>
@@ -629,9 +938,45 @@ function App() {
                 )}
               </aside>
             </div>
+            </>
           )}
         </main>
+      ) : navigationView === "equipment" ? (
+        <NavigationPage
+          title="Equipment List"
+          description="Select a vessel from the Dashboard to open its equipment register."
+          actionLabel="Go to Dashboard"
+          onAction={() => navigate("dashboard")}
+        />
+      ) : navigationView === "medical" ? (
+        <NavigationPage
+          title="Medical Chest"
+          description="Medical chest management is not configured in this build."
+        />
+      ) : navigationView === "synchronization" ? (
+        <NavigationPage
+          title="Synchronization"
+          description="Synchronization is not configured in this build."
+        />
+      ) : navigationView === "profile" ? (
+        <main className="navigation-page">
+          <section className="navigation-card profile-card">
+            <h1>My Profile</h1>
+            <div className="details-grid">
+              <Detail label="Full Name" value={user.fullName} />
+              <Detail label="Email" value={user.email} />
+              <Detail label="Role" value={user.role} />
+            </div>
+          </section>
+        </main>
+      ) : (
+        <NavigationPage
+          title="Administration"
+          description="User administration is open."
+        />
       )}
+        </div>
+      </div>
 
 
 
@@ -667,8 +1012,10 @@ function App() {
         <UserAdministrationDialog
           token={user.token}
           vessels={vessels}
-          onClose={() =>
-            setShowUserAdministration(false)}
+          onClose={() => {
+            setShowUserAdministration(false);
+            setNavigationView("dashboard");
+          }}
         />}
 
       {showVesselProfile &&
@@ -762,11 +1109,316 @@ function App() {
   );
 }
 
+function SidebarItem({
+  icon,
+  label,
+  active = false,
+  collapsed,
+  onClick,
+}: {
+  icon: string;
+  label: string;
+  active?: boolean;
+  collapsed: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={`sidebar-item ${active ? "active" : ""}`}
+      onClick={onClick}
+      title={collapsed ? label : undefined}
+      aria-current={active ? "page" : undefined}
+    >
+      <span className="sidebar-icon" aria-hidden="true">{icon}</span>
+      {!collapsed && <span>{label}</span>}
+    </button>
+  );
+}
 
+function NavigationPage({
+  title,
+  description,
+  actionLabel,
+  onAction,
+}: {
+  title: string;
+  description: string;
+  actionLabel?: string;
+  onAction?: () => void;
+}) {
+  return (
+    <main className="navigation-page">
+      <section className="navigation-card">
+        <h1>{title}</h1>
+        <p className="muted">{description}</p>
+        {actionLabel && onAction &&
+          <button className="primary" type="button" onClick={onAction}>
+            {actionLabel}
+          </button>}
+      </section>
+    </main>
+  );
+}
 
+function EquipmentDetailsPage({
+  item,
+  vessel,
+  token,
+  onBack,
+}: {
+  item: Equipment;
+  vessel: Vessel;
+  token: string;
+  onBack: () => void;
+}) {
+  const [documents, setDocuments] = useState<EquipmentDocument[]>([]);
+  const [documentsBusy, setDocumentsBusy] = useState(true);
+  const [documentsError, setDocumentsError] = useState("");
 
+  useEffect(() => {
+    setDocumentsBusy(true);
+    setDocumentsError("");
+    authFetch(
+      `${apiBaseUrl}/equipment/${item.id}/documents`,
+      token,
+    )
+      .then(async response => {
+        if (!response.ok)
+          throw new Error("Unable to load equipment documents.");
+        return response.json();
+      })
+      .then((items: EquipmentDocument[]) => setDocuments(items))
+      .catch(exception =>
+        setDocumentsError((exception as Error).message))
+      .finally(() => setDocumentsBusy(false));
+  }, [item.id, token]);
 
+  const certificates = documents.filter(
+    document => document.type === "Certificate",
+  );
+  const reports = documents.filter(
+    document => document.type === "ServiceReport",
+  );
 
+  return (
+    <main className="equipment-details-page">
+      <button className="back-button" type="button" onClick={onBack}>
+        ← Back to Equipment List
+      </button>
+      <div className="equipment-details-heading">
+        <div>
+          <h1>Equipment Details</h1>
+          <p className="muted">
+            {vessel.vesselName} · IMO {vessel.imoNumber}
+          </p>
+        </div>
+        <span className={`status status-${item.status.toLowerCase()}`}>
+          {item.status.toUpperCase()}
+        </span>
+      </div>
+
+      <div className="equipment-details-columns">
+        <section className="equipment-details-card">
+          <h2>Equipment Information</h2>
+          <div className="details-grid">
+            <Detail label="Equipment Name" value={item.equipmentName} />
+            <Detail label="Category" value={item.category} />
+            <Detail label="Manufacturer" value={item.maker || "—"} />
+            <Detail label="Model" value={item.model || "—"} />
+            <Detail label="Serial Number" value={item.serialNumber || "—"} />
+            <Detail label="Responsible" value={item.inspectionBy} />
+            <Detail label="Current Status" value={item.status.toUpperCase()} />
+            <Detail label="Expiry Date" value={formatDate(item.expiryDate)} />
+          </div>
+        </section>
+
+        <section className="equipment-details-card">
+          <h2>Equipment Notes</h2>
+          <p className="equipment-notes">
+            {item.remarks || "No equipment notes."}
+          </p>
+        </section>
+      </div>
+
+      <div className="equipment-related-sections">
+        <section className="equipment-details-card">
+          <h2>Certificates</h2>
+          <DocumentRepositorySection
+            documents={certificates}
+            token={token}
+            typeLabel="certificate"
+            currentEmpty="No certificate available"
+            archiveEmpty="No archived certificates"
+            busy={documentsBusy}
+            error={documentsError}
+          />
+        </section>
+
+        <section className="equipment-details-card">
+          <h2>Service Reports</h2>
+          <DocumentRepositorySection
+            documents={reports}
+            token={token}
+            typeLabel="service report"
+            currentEmpty="No service report available"
+            archiveEmpty="No archived service reports"
+            busy={documentsBusy}
+            error={documentsError}
+          />
+        </section>
+
+        <section className="equipment-details-card">
+          <h2>History</h2>
+          <p className="muted">No history available</p>
+        </section>
+      </div>
+    </main>
+  );
+}
+
+function DocumentRepositorySection({
+  documents,
+  token,
+  typeLabel,
+  currentEmpty,
+  archiveEmpty,
+  busy,
+  error,
+}: {
+  documents: EquipmentDocument[];
+  token: string;
+  typeLabel: string;
+  currentEmpty: string;
+  archiveEmpty: string;
+  busy: boolean;
+  error: string;
+}) {
+  if (busy) return <p className="muted">Loading documents...</p>;
+  if (error) return <p className="document-error">{error}</p>;
+
+  const current = documents.filter(document => document.isCurrent);
+  const archive = documents.filter(document => !document.isCurrent);
+
+  return (
+    <div className="document-repository">
+      <h3>Current</h3>
+      {current.length === 0
+        ? <p className="muted">{currentEmpty}</p>
+        : current.map(document =>
+            <DocumentRepositoryRow
+              key={document.id}
+              document={document}
+              token={token}
+              label={typeLabel}
+            />)}
+
+      <h3>Archive</h3>
+      {archive.length === 0
+        ? <p className="muted">{archiveEmpty}</p>
+        : archive.map(document =>
+            <DocumentRepositoryRow
+              key={document.id}
+              document={document}
+              token={token}
+              label={typeLabel}
+            />)}
+    </div>
+  );
+}
+
+function DocumentRepositoryRow({
+  document,
+  token,
+  label,
+}: {
+  document: EquipmentDocument;
+  token: string;
+  label: string;
+}) {
+  return (
+    <article className="document-repository-row">
+      <div className="document-summary-heading">
+        <strong>{document.fileName}</strong>
+        <DocumentOpenButton
+          token={token}
+          documentId={document.id}
+          label={label}
+        />
+      </div>
+      <div className="document-badges">
+        <span className={`document-badge ${
+          document.isCurrent ? "current" : "archived"
+        }`}>
+          {document.isCurrent ? "Current" : "Archive"}
+        </span>
+      </div>
+      <dl>
+        <dt>Issue Date</dt>
+        <dd>{formatDate(document.issueDate)}</dd>
+        <dt>Expiry Date</dt>
+        <dd>{formatDate(document.expiryDate)}</dd>
+        <dt>Document Number</dt>
+        <dd>{document.documentNumber || "—"}</dd>
+        <dt>Issuer</dt>
+        <dd>{document.issuer || "—"}</dd>
+        <dt>Remarks</dt>
+        <dd>{document.remarks || "—"}</dd>
+        <dt>Created</dt>
+        <dd>{new Intl.DateTimeFormat("en-GB", {
+          dateStyle: "medium",
+          timeStyle: "short",
+        }).format(new Date(document.createdUtc))}</dd>
+      </dl>
+    </article>
+  );
+}
+
+function DocumentOpenButton({
+  token,
+  documentId,
+  label,
+}: {
+  token: string;
+  documentId: string;
+  label: string;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [openError, setOpenError] = useState("");
+
+  async function openDocument() {
+    setBusy(true);
+    setOpenError("");
+
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/documents/${documentId}/download`,
+        token,
+      );
+
+      if (!response.ok)
+        throw new Error(`Unable to open ${label}.`);
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener");
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    } catch (exception) {
+      setOpenError((exception as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="document-open-action">
+      <button type="button" disabled={busy} onClick={openDocument}>
+        {busy ? "Opening..." : "Open"}
+      </button>
+      {openError && <small className="document-error">{openError}</small>}
+    </div>
+  );
+}
 
 type CopyMode = "AddOnlyNew" | "ReplaceExisting";
 

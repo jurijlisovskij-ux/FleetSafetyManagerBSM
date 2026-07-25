@@ -20,6 +20,8 @@ public sealed class Equipment
     public string? CurrentReportFileName { get; set; }
     public string? CurrentCertificatePath { get; set; }
     public string? CurrentCertificateFileName { get; set; }
+    public ICollection<EquipmentDocument> Documents { get; set; } =
+        new List<EquipmentDocument>();
 
     public EquipmentStatus CalculateStatus(DateOnly today, int reminderDays)
     {

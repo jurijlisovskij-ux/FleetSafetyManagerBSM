@@ -10,6 +10,8 @@ public sealed class FsmDbContext(DbContextOptions<FsmDbContext> options)
     public DbSet<Vessel> Vessels => Set<Vessel>();
     public DbSet<UserVessel> UserVessels => Set<UserVessel>();
     public DbSet<Equipment> Equipment => Set<Equipment>();
+    public DbSet<EquipmentDocument> EquipmentDocuments =>
+        Set<EquipmentDocument>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -64,6 +66,37 @@ public sealed class FsmDbContext(DbContextOptions<FsmDbContext> options)
                 .OnDelete(DeleteBehavior.Cascade);
             entity.HasIndex(x => new { x.VesselId, x.Category });
             entity.HasIndex(x => x.ExpiryDate);
+        });
+
+        modelBuilder.Entity<EquipmentDocument>(entity =>
+        {
+            entity.ToTable("equipment_documents");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.DocumentType).HasConversion<string>();
+            entity.Property(x => x.FileName).HasMaxLength(260).IsRequired();
+            entity.Property(x => x.StoredFileName).HasMaxLength(520).IsRequired();
+            entity.Property(x => x.MimeType).HasMaxLength(120).IsRequired();
+            entity.Property(x => x.DocumentNumber).HasMaxLength(180);
+            entity.Property(x => x.Issuer).HasMaxLength(240);
+            entity.HasOne(x => x.Equipment)
+                .WithMany(x => x.Documents)
+                .HasForeignKey(x => x.EquipmentId)
+                .OnDelete(DeleteBehavior.Cascade);
+            entity.HasIndex(x => new
+            {
+                x.EquipmentId,
+                x.DocumentType,
+                x.CreatedUtc
+            });
+            entity.HasIndex(x => new
+            {
+                x.EquipmentId,
+                x.DocumentType
+            })
+            .IsUnique()
+            .HasFilter("\"IsCurrent\" = 1")
+            .HasDatabaseName(
+                "IX_equipment_documents_EquipmentId_DocumentType_Current");
         });
     }
 }
