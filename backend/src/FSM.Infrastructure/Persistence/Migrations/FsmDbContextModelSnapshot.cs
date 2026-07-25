@@ -150,6 +150,210 @@ namespace FSM.Infrastructure.Persistence.Migrations
                     b.ToTable("equipment_documents", (string)null);
                 });
 
+            modelBuilder.Entity("FSM.Domain.Entities.InspectionFinding", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Department")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EquipmentOrArea")
+                        .IsRequired()
+                        .HasMaxLength(240)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ExactLocation")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("InspectionReportId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InspectorRemarks")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Priority")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SequenceNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InspectionReportId", "SequenceNumber")
+                        .IsUnique();
+
+                    b.ToTable("inspection_findings", (string)null);
+                });
+
+            modelBuilder.Entity("FSM.Domain.Entities.InspectionPhoto", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Caption")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("FileSize")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<Guid>("FindingId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("MimeType")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OriginalFileName")
+                        .IsRequired()
+                        .HasMaxLength(260)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StoredFileName")
+                        .IsRequired()
+                        .HasMaxLength(520)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("FindingId");
+
+                    b.ToTable("inspection_photos", (string)null);
+                });
+
+            modelBuilder.Entity("FSM.Domain.Entities.InspectionReport", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GeneralRemarks")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateOnly>("InspectionDate")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InspectionType")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InspectorName")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReopenedBy")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ReopenedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReopeningReason")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReportNumber")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("State")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("VesselId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ReportNumber")
+                        .IsUnique();
+
+                    b.HasIndex("VesselId", "InspectionDate");
+
+                    b.ToTable("inspection_reports", (string)null);
+                });
+
+            modelBuilder.Entity("FSM.Domain.Entities.InspectionReportPdf", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(260)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("FileSize")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("GeneratedBy")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("GeneratedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("InspectionReportId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsCurrent")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("MimeType")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StoredFileName")
+                        .IsRequired()
+                        .HasMaxLength(520)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("VersionNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InspectionReportId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_inspection_report_pdfs_Report_Current")
+                        .HasFilter("\"IsCurrent\" = 1");
+
+                    b.HasIndex("InspectionReportId", "VersionNumber")
+                        .IsUnique();
+
+                    b.ToTable("inspection_report_pdfs", (string)null);
+                });
+
             modelBuilder.Entity("FSM.Domain.Entities.User", b =>
                 {
                     b.Property<Guid>("Id")
@@ -259,6 +463,50 @@ namespace FSM.Infrastructure.Persistence.Migrations
                     b.Navigation("Equipment");
                 });
 
+            modelBuilder.Entity("FSM.Domain.Entities.InspectionFinding", b =>
+                {
+                    b.HasOne("FSM.Domain.Entities.InspectionReport", "InspectionReport")
+                        .WithMany("Findings")
+                        .HasForeignKey("InspectionReportId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("InspectionReport");
+                });
+
+            modelBuilder.Entity("FSM.Domain.Entities.InspectionPhoto", b =>
+                {
+                    b.HasOne("FSM.Domain.Entities.InspectionFinding", "Finding")
+                        .WithMany("Photos")
+                        .HasForeignKey("FindingId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Finding");
+                });
+
+            modelBuilder.Entity("FSM.Domain.Entities.InspectionReport", b =>
+                {
+                    b.HasOne("FSM.Domain.Entities.Vessel", "Vessel")
+                        .WithMany("InspectionReports")
+                        .HasForeignKey("VesselId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Vessel");
+                });
+
+            modelBuilder.Entity("FSM.Domain.Entities.InspectionReportPdf", b =>
+                {
+                    b.HasOne("FSM.Domain.Entities.InspectionReport", "InspectionReport")
+                        .WithMany("PdfVersions")
+                        .HasForeignKey("InspectionReportId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("InspectionReport");
+                });
+
             modelBuilder.Entity("FSM.Domain.Entities.UserVessel", b =>
                 {
                     b.HasOne("FSM.Domain.Entities.User", "User")
@@ -283,6 +531,18 @@ namespace FSM.Infrastructure.Persistence.Migrations
                     b.Navigation("Documents");
                 });
 
+            modelBuilder.Entity("FSM.Domain.Entities.InspectionFinding", b =>
+                {
+                    b.Navigation("Photos");
+                });
+
+            modelBuilder.Entity("FSM.Domain.Entities.InspectionReport", b =>
+                {
+                    b.Navigation("Findings");
+
+                    b.Navigation("PdfVersions");
+                });
+
             modelBuilder.Entity("FSM.Domain.Entities.User", b =>
                 {
                     b.Navigation("VesselAssignments");
@@ -291,6 +551,8 @@ namespace FSM.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("FSM.Domain.Entities.Vessel", b =>
                 {
                     b.Navigation("Equipment");
+
+                    b.Navigation("InspectionReports");
 
                     b.Navigation("UserAssignments");
                 });

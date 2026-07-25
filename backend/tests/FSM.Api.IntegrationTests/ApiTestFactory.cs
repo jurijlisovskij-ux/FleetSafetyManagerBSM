@@ -65,6 +65,10 @@ public sealed class ApiTestFactory : WebApplicationFactory<Program>
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<FsmDbContext>();
 
+        await db.InspectionReportPdfs.ExecuteDeleteAsync();
+        await db.InspectionPhotos.ExecuteDeleteAsync();
+        await db.InspectionFindings.ExecuteDeleteAsync();
+        await db.InspectionReports.ExecuteDeleteAsync();
         await db.EquipmentDocuments.ExecuteDeleteAsync();
         await db.UserVessels.ExecuteDeleteAsync();
         await db.Equipment.ExecuteDeleteAsync();

@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json.Serialization;
 using FSM.Api;
 using FSM.Api.Auth;
 using FSM.Api.Services;
@@ -20,7 +21,9 @@ if (WindowsServiceHelpers.IsWindowsService())
     });
 }
 
-builder.Services.AddControllers();
+builder.Services.AddControllers().AddJsonOptions(options =>
+    options.JsonSerializerOptions.Converters.Add(
+        new JsonStringEnumConverter()));
 builder.Services.AddProblemDetails();
 builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddEndpointsApiExplorer();
@@ -37,6 +40,8 @@ builder.Services.AddSingleton<DocumentStorageService>();
 builder.Services.AddScoped<EquipmentDocumentAccessService>();
 builder.Services.AddSingleton<ServiceRequestExcelService>();
 builder.Services.AddSingleton<InspectionListService>();
+builder.Services.AddSingleton<InspectionStorageService>();
+builder.Services.AddSingleton<InspectionPdfService>();
 builder.Services.Configure<NotificationSettings>(
     builder.Configuration.GetSection("Notifications"));
 builder.Services.Configure<SmtpSettings>(

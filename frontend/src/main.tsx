@@ -50,6 +50,7 @@ type SortDirection = "asc" | "desc";
 type NavigationView =
   | "dashboard"
   | "equipment"
+  | "inspections"
   | "medical"
   | "administration"
   | "synchronization"
@@ -159,6 +160,40 @@ function categoryToApi(category: Equipment["category"]) {
 
 function inspectionToApi(value: Equipment["inspectionBy"]) {
   return value === "Crew" ? 0 : 1;
+}
+
+type InspectionReportSummary = {
+  id: string; reportNumber: string; vesselId: string; vesselName: string;
+  inspectionDate: string; inspectorName: string;
+  inspectionType: "Deck" | "Engine" | "DeckAndEngine";
+  state: "Draft" | "Finalized"; findingCount: number;
+  openFindingCount: number; createdUtc: string;
+};
+type InspectionPhoto = {
+  id: string; originalFileName: string; mimeType: string;
+  fileSize: number; caption: string | null; createdUtc: string;
+};
+type InspectionFinding = {
+  id: string; sequenceNumber: number; department: "Deck" | "Engine";
+  equipmentOrArea: string; exactLocation: string | null; description: string;
+  priority: "Critical" | "Urgent" | "Normal"; status: "Open" | "Closed";
+  inspectorRemarks: string | null; photos: InspectionPhoto[];
+};
+type InspectionReport = InspectionReportSummary & {
+  imoNumber: string; generalRemarks: string | null; updatedUtc: string;
+  reopenedUtc: string | null; reopenedBy: string | null;
+  reopeningReason: string | null; findings: InspectionFinding[];
+};
+type InspectionPdf = {
+  id: string; versionNumber: number; fileName: string; fileSize: number;
+  generatedUtc: string; generatedBy: string; isCurrent: boolean;
+};
+
+function formatDateTime(value: string) {
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "2-digit", month: "short", year: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  }).format(new Date(value));
 }
 
 function App() {
@@ -523,6 +558,7 @@ function App() {
           </button>
           <SidebarItem icon="⌂" label="Dashboard" active={navigationView === "dashboard" && !currentVessel} collapsed={sidebarCollapsed} onClick={() => navigate("dashboard")} />
           <SidebarItem icon="☷" label="Equipment List" active={navigationView === "equipment" || !!currentVessel} collapsed={sidebarCollapsed} onClick={() => navigate("equipment")} />
+          <SidebarItem icon="▣" label="Inspection Reports" active={navigationView === "inspections"} collapsed={sidebarCollapsed} onClick={() => navigate("inspections")} />
           <SidebarItem icon="✚" label="Medical Chest" active={navigationView === "medical"} collapsed={sidebarCollapsed} onClick={() => navigate("medical")} />
           {user.role === "OfficeAdmin" &&
             <SidebarItem icon="⚙" label="Administration" active={navigationView === "administration"} collapsed={sidebarCollapsed} onClick={() => navigate("administration")} />}
@@ -668,6 +704,8 @@ function App() {
             </div>
           </section>
         </main>
+      ) : navigationView === "inspections" ? (
+        <InspectionReportsPage user={user} vessels={vessels} />
       ) : navigationView === "equipment" &&
           currentVessel &&
           detailEquipment ? (
@@ -3483,6 +3521,345 @@ function DocumentControl({
       </div>
     </div>
   );
+}
+
+function InspectionReportsPage({
+  user, vessels,
+}: {
+  user: LoginResult; vessels: Vessel[];
+}) {
+  const [reports, setReports] = useState<InspectionReportSummary[]>([]);
+  const [report, setReport] = useState<InspectionReport | null>(null);
+  const [pdfs, setPdfs] = useState<InspectionPdf[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [createOpen, setCreateOpen] = useState(false);
+  const [editingFinding, setEditingFinding] = useState<InspectionFinding | null>(null);
+
+  async function request(url: string, init: RequestInit = {}) {
+    const response = await authFetch(`${apiBaseUrl}${url}`, user.token, init);
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw new Error(body?.detail ?? body?.title ?? "Request failed.");
+    }
+    return response;
+  }
+  async function loadList() {
+    setBusy(true); setError("");
+    try {
+      setReports(await (await request("/inspection-reports")).json());
+    } catch (reason) { setError((reason as Error).message); }
+    finally { setBusy(false); }
+  }
+  async function openReport(id: string, push = true) {
+    setBusy(true); setError("");
+    try {
+      const [detail, versions] = await Promise.all([
+        request(`/inspection-reports/${id}`).then(x => x.json()),
+        request(`/inspection-reports/${id}/pdf-versions`).then(x => x.json()),
+      ]);
+      setReport(detail); setPdfs(versions);
+      if (push) window.history.pushState({ inspectionReportId: id }, "", `#inspection-reports/${id}`);
+    } catch (reason) { setError((reason as Error).message); }
+    finally { setBusy(false); }
+  }
+  useEffect(() => { void loadList(); }, []);
+  useEffect(() => {
+    const pop = (event: PopStateEvent) => {
+      const id = typeof event.state?.inspectionReportId === "string"
+        ? event.state.inspectionReportId : null;
+      if (id) void openReport(id, false); else { setReport(null); void loadList(); }
+    };
+    window.addEventListener("popstate", pop);
+    return () => window.removeEventListener("popstate", pop);
+  }, []);
+  function back() {
+    if (window.history.state?.inspectionReportId) window.history.back();
+    else { setReport(null); void loadList(); }
+  }
+  async function download(url: string, name: string) {
+    try {
+      const response = await request(url);
+      const objectUrl = URL.createObjectURL(await response.blob());
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl; anchor.download = name; anchor.click();
+      URL.revokeObjectURL(objectUrl);
+    } catch (reason) { setError((reason as Error).message); }
+  }
+  async function action(url: string, body?: unknown) {
+    setBusy(true); setError("");
+    try {
+      await request(url, {
+        method: "POST",
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (report) await openReport(report.id, false); else await loadList();
+    } catch (reason) { setError((reason as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  if (!report) return (
+    <main className="workspace inspection-reports-page">
+      <div className="workspace-heading">
+        <div><h1>Inspection Reports</h1><p className="muted">Vessel inspection reports and finalized PDF versions.</p></div>
+        {user.role !== "Crew" &&
+          <button className="primary" onClick={() => setCreateOpen(true)}>Create Report</button>}
+      </div>
+      {error && <div className="error">{error}</div>}
+      {busy ? <div className="loading">Loading inspection reports...</div> :
+        reports.length === 0 ? <div className="empty-state">No inspection reports available.</div> :
+        <div className="table-scroll"><table className="equipment-table inspection-report-table">
+          <thead><tr><th>Report number</th><th>Vessel</th><th>Inspection date</th>
+            <th>Inspector</th><th>Type</th><th>Findings</th><th>Open</th>
+            <th>Created</th><th>Actions</th></tr></thead>
+          <tbody>{reports.map(item => <tr key={item.id}>
+            <td><strong>{item.reportNumber}</strong><small>{item.state}</small></td>
+            <td>{item.vesselName}</td><td>{formatDate(item.inspectionDate)}</td>
+            <td>{item.inspectorName}</td><td>{item.inspectionType === "DeckAndEngine" ? "Deck and Engine" : item.inspectionType}</td>
+            <td>{item.findingCount}</td><td>{item.openFindingCount}</td>
+            <td>{formatDateTime(item.createdUtc)}</td><td className="row-actions">
+              <button onClick={() => void openReport(item.id)}>Open</button>
+              {item.state === "Finalized" && <button onClick={async () => {
+                await action(`/inspection-reports/${item.id}/generate-pdf`);
+                await openReport(item.id);
+              }}>Generate PDF</button>}
+            </td>
+          </tr>)}</tbody>
+        </table></div>}
+      {createOpen && <InspectionCreateDialog vessels={vessels} user={user}
+        onClose={() => setCreateOpen(false)}
+        onCreated={id => { setCreateOpen(false); void openReport(id); }} />}
+    </main>
+  );
+
+  const editable = report.state === "Draft" && user.role !== "Crew";
+  return (
+    <main className="workspace inspection-reports-page">
+      <div className="workspace-heading">
+        <div><button className="back-button" onClick={back}>← Inspection Reports</button>
+          <h1>{report.reportNumber}</h1>
+          <p className="muted">{report.vesselName} · IMO {report.imoNumber} · {report.state}</p></div>
+        <div className="workspace-actions">
+          {editable && <button onClick={async () => {
+            const inspectionDate = window.prompt(
+              "Inspection date (YYYY-MM-DD):", report.inspectionDate);
+            if (!inspectionDate) return;
+            const inspectorName = window.prompt("Inspector name:", report.inspectorName);
+            if (!inspectorName) return;
+            const typeInput = window.prompt(
+              "Inspection type (Deck, Engine, or DeckAndEngine):",
+              report.inspectionType);
+            if (!typeInput ||
+                !["Deck", "Engine", "DeckAndEngine"].includes(typeInput)) {
+              setError("Inspection type must be Deck, Engine, or DeckAndEngine.");
+              return;
+            }
+            const generalRemarks = window.prompt("General remarks:", report.generalRemarks ?? "");
+            if (generalRemarks === null) return;
+            await request(`/inspection-reports/${report.id}`, {
+              method: "PUT", headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                inspectionDate, inspectorName,
+                inspectionType: typeInput, generalRemarks,
+              }),
+            });
+            await openReport(report.id, false);
+          }}>Edit Header</button>}
+          {editable && <button onClick={() => setEditingFinding({
+            id: "", sequenceNumber: report.findings.length + 1, department: "Deck",
+            equipmentOrArea: "", exactLocation: "", description: "", priority: "Normal",
+            status: "Open", inspectorRemarks: "", photos: [],
+          })}>Add Finding</button>}
+          {editable && <button className="primary"
+            onClick={() => void action(`/inspection-reports/${report.id}/finalize`)}>Finalize Report</button>}
+          {report.state === "Finalized" && <button className="primary"
+            onClick={() => void action(`/inspection-reports/${report.id}/generate-pdf`)}>Generate PDF</button>}
+          {report.state === "Finalized" && user.role === "OfficeAdmin" &&
+            <button onClick={() => {
+              const reason = window.prompt("Reason for reopening:");
+              if (reason) void action(`/inspection-reports/${report.id}/reopen`, { reason });
+            }}>Reopen</button>}
+        </div>
+      </div>
+      {error && <div className="error">{error}</div>}
+      <section className="details-card inspection-header">
+        <Detail label="Inspection date" value={formatDate(report.inspectionDate)} />
+        <Detail label="Inspector" value={report.inspectorName} />
+        <Detail label="Inspection type" value={report.inspectionType === "DeckAndEngine" ? "Deck and Engine" : report.inspectionType} />
+        <Detail label="Created" value={formatDateTime(report.createdUtc)} />
+        <Detail label="Updated" value={formatDateTime(report.updatedUtc)} />
+        <Detail label="General remarks" value={report.generalRemarks ?? "—"} />
+      </section>
+      <section className="dashboard-section">
+        <div className="dashboard-section-heading"><h2>Findings</h2>
+          <span className="muted">{report.findings.length} total · {report.findings.filter(x => x.status === "Open").length} open</span></div>
+        {report.findings.length === 0 ? <div className="empty-state">No findings recorded.</div> :
+          <div className="inspection-findings">{report.findings.map((finding, index) =>
+            <article className={`inspection-finding priority-${finding.priority.toLowerCase()}`} key={finding.id}>
+              <div className="inspection-finding-heading">
+                <h3>Finding {finding.sequenceNumber}: {finding.equipmentOrArea}</h3>
+                <div><span className="status">{finding.priority}</span> <span className="status">{finding.status}</span></div>
+              </div>
+              <p><strong>{finding.department}</strong>{finding.exactLocation ? ` · ${finding.exactLocation}` : ""}</p>
+              <p>{finding.description}</p>
+              {finding.inspectorRemarks && <p className="muted">Inspector remarks: {finding.inspectorRemarks}</p>}
+              <div className="inspection-photos">{finding.photos.map(photo =>
+                <figure key={photo.id}>
+                  <AuthorizedImage photo={photo} token={user.token}
+                    onClick={() => void download(`/inspection-photos/${photo.id}/download`, photo.originalFileName)} />
+                  <figcaption>{photo.caption ?? photo.originalFileName}</figcaption>
+                  {editable && <div className="row-actions">
+                    <button onClick={async () => {
+                      const caption = window.prompt("Photo caption:", photo.caption ?? "");
+                      if (caption === null) return;
+                      await request(`/inspection-photos/${photo.id}`, {
+                        method: "PUT", headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ caption }),
+                      });
+                      await openReport(report.id, false);
+                    }}>Caption</button>
+                    <button className="danger" onClick={async () => {
+                      await request(`/inspection-photos/${photo.id}`, { method: "DELETE" });
+                      await openReport(report.id, false);
+                    }}>Remove</button>
+                  </div>}
+                </figure>)}</div>
+              {editable && <div className="row-actions">
+                <button onClick={() => setEditingFinding(finding)}>Edit</button>
+                <label className="button-like">Add Photos<input className="hidden-file-input"
+                  type="file" accept="image/jpeg,image/png" multiple onChange={async event => {
+                    for (const file of Array.from(event.target.files ?? [])) {
+                      const data = new FormData(); data.append("file", file);
+                      await request(`/inspection-findings/${finding.id}/photos`, { method: "POST", body: data });
+                    }
+                    await openReport(report.id, false);
+                  }} /></label>
+                <button disabled={index === 0} onClick={() => void reorder(report, finding.id, -1, request, openReport)}>↑</button>
+                <button disabled={index === report.findings.length - 1} onClick={() => void reorder(report, finding.id, 1, request, openReport)}>↓</button>
+                <button className="danger" onClick={async () => {
+                  if (!window.confirm("Remove this finding?")) return;
+                  await request(`/inspection-findings/${finding.id}`, { method: "DELETE" });
+                  await openReport(report.id, false);
+                }}>Remove</button>
+              </div>}
+            </article>)}</div>}
+      </section>
+      <section className="dashboard-section">
+        <div className="dashboard-section-heading"><h2>PDF Versions</h2></div>
+        {pdfs.length === 0 ? <div className="empty-state">No PDF generated.</div> :
+          <div className="document-list">{pdfs.map(pdf => <div className="document-row" key={pdf.id}>
+            <div><strong>{pdf.fileName}</strong><small>Version {pdf.versionNumber} · {formatDateTime(pdf.generatedUtc)} · {pdf.generatedBy}</small></div>
+            <div>{pdf.isCurrent && <span className="document-badge current">Current</span>}
+              {!pdf.isCurrent && <span className="document-badge archived">Archive</span>}
+              <button onClick={() => void download(`/inspection-report-pdfs/${pdf.id}/download`, pdf.fileName)}>Open</button></div>
+          </div>)}</div>}
+      </section>
+      {editingFinding && <InspectionFindingDialog reportId={report.id}
+        finding={editingFinding} token={user.token}
+        onClose={() => setEditingFinding(null)}
+        onSaved={() => { setEditingFinding(null); void openReport(report.id, false); }} />}
+    </main>
+  );
+}
+
+async function reorder(report: InspectionReport, id: string, offset: number,
+  request: (url: string, init?: RequestInit) => Promise<Response>,
+  refresh: (id: string, push?: boolean) => Promise<void>) {
+  const ids = report.findings.map(x => x.id);
+  const index = ids.indexOf(id); const target = index + offset;
+  [ids[index], ids[target]] = [ids[target], ids[index]];
+  await request(`/inspection-reports/${report.id}/findings/reorder`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ findingIds: ids }),
+  });
+  await refresh(report.id, false);
+}
+
+function AuthorizedImage({ photo, token, onClick }: {
+  photo: InspectionPhoto; token: string; onClick: () => void;
+}) {
+  const [source, setSource] = useState("");
+  useEffect(() => {
+    let active = true;
+    let objectUrl = "";
+    authFetch(`${apiBaseUrl}/inspection-photos/${photo.id}/download`, token)
+      .then(response => response.ok ? response.blob() : Promise.reject())
+      .then(blob => {
+        objectUrl = URL.createObjectURL(blob);
+        if (active) setSource(objectUrl);
+      }).catch(() => {});
+    return () => {
+      active = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [photo.id, token]);
+  return source
+    ? <img src={source} alt={photo.caption ?? photo.originalFileName} onClick={onClick} />
+    : <div className="photo-loading">Loading photo…</div>;
+}
+
+function InspectionCreateDialog({ vessels, user, onClose, onCreated }: {
+  vessels: Vessel[]; user: LoginResult; onClose: () => void;
+  onCreated: (id: string) => void;
+}) {
+  const [draft, setDraft] = useState({
+    vesselId: vessels[0]?.id ?? "", inspectionDate: new Date().toISOString().slice(0, 10),
+    inspectorName: user.fullName, inspectionType: "Deck" as InspectionReport["inspectionType"],
+    generalRemarks: "",
+  });
+  const [error, setError] = useState("");
+  return <div className="modal-backdrop"><form className="modal inspection-dialog" onSubmit={async event => {
+    event.preventDefault(); setError("");
+    const response = await authFetch(`${apiBaseUrl}/inspection-reports`, user.token, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(draft),
+    });
+    if (!response.ok) { const body = await response.json().catch(() => null); setError(body?.detail ?? "Unable to create report."); return; }
+    onCreated((await response.json()).id);
+  }}>
+    <div className="modal-heading"><h2>Create Inspection Report</h2><button type="button" onClick={onClose}>×</button></div>
+    {error && <div className="error">{error}</div>}
+    <label>Vessel<select required value={draft.vesselId} onChange={e => setDraft({ ...draft, vesselId: e.target.value })}>
+      {vessels.map(x => <option key={x.id} value={x.id}>{x.vesselName}</option>)}</select></label>
+    <label>Inspection date<input required type="date" value={draft.inspectionDate} onChange={e => setDraft({ ...draft, inspectionDate: e.target.value })} /></label>
+    <label>Inspector<input required value={draft.inspectorName} onChange={e => setDraft({ ...draft, inspectorName: e.target.value })} /></label>
+    <label>Inspection type<select value={draft.inspectionType} onChange={e => setDraft({ ...draft, inspectionType: e.target.value as InspectionReport["inspectionType"] })}>
+      <option value="Deck">Deck</option><option value="Engine">Engine</option><option value="DeckAndEngine">Deck and Engine</option></select></label>
+    <label>General remarks<textarea value={draft.generalRemarks} onChange={e => setDraft({ ...draft, generalRemarks: e.target.value })} /></label>
+    <div className="modal-actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary">Create Draft</button></div>
+  </form></div>;
+}
+
+function InspectionFindingDialog({ reportId, finding, token, onClose, onSaved }: {
+  reportId: string; finding: InspectionFinding; token: string;
+  onClose: () => void; onSaved: () => void;
+}) {
+  const [draft, setDraft] = useState(finding);
+  const [error, setError] = useState("");
+  return <div className="modal-backdrop"><form className="modal inspection-dialog" onSubmit={async event => {
+    event.preventDefault(); setError("");
+    const url = finding.id ? `/inspection-findings/${finding.id}` : `/inspection-reports/${reportId}/findings`;
+    const response = await authFetch(`${apiBaseUrl}${url}`, token, {
+      method: finding.id ? "PUT" : "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(draft),
+    });
+    if (!response.ok) { const body = await response.json().catch(() => null); setError(body?.detail ?? "Unable to save finding."); return; }
+    onSaved();
+  }}>
+    <div className="modal-heading"><h2>{finding.id ? "Edit" : "Add"} Finding</h2><button type="button" onClick={onClose}>×</button></div>
+    {error && <div className="error">{error}</div>}
+    <div className="form-grid">
+      <label>Department<select value={draft.department} onChange={e => setDraft({ ...draft, department: e.target.value as InspectionFinding["department"] })}><option>Deck</option><option>Engine</option></select></label>
+      <label>Priority<select value={draft.priority} onChange={e => setDraft({ ...draft, priority: e.target.value as InspectionFinding["priority"] })}><option>Critical</option><option>Urgent</option><option>Normal</option></select></label>
+      <label>Equipment or area<input required value={draft.equipmentOrArea} onChange={e => setDraft({ ...draft, equipmentOrArea: e.target.value })} /></label>
+      <label>Exact location<input value={draft.exactLocation ?? ""} onChange={e => setDraft({ ...draft, exactLocation: e.target.value })} /></label>
+      <label>Status<select value={draft.status} onChange={e => setDraft({ ...draft, status: e.target.value as InspectionFinding["status"] })}><option>Open</option><option>Closed</option></select></label>
+    </div>
+    <label>Description<textarea required rows={4} value={draft.description} onChange={e => setDraft({ ...draft, description: e.target.value })} /></label>
+    <label>Inspector remarks<textarea value={draft.inspectorRemarks ?? ""} onChange={e => setDraft({ ...draft, inspectorRemarks: e.target.value })} /></label>
+    <div className="modal-actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary">Save Finding</button></div>
+  </form></div>;
 }
 
 function Detail({ label, value }: { label: string; value: string }) {
