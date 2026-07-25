@@ -78,14 +78,14 @@ type EquipmentDocument = {
   id: string;
   type: "Certificate" | "ServiceReport";
   fileName: string;
-  issueDate?: string;
-  expiryDate?: string;
-  documentNumber?: string;
-  issuer?: string;
-  remarks?: string;
+  issueDate: string | null;
+  expiryDate: string | null;
+  documentNumber: string | null;
+  issuer: string | null;
+  remarks: string | null;
   isCurrent: boolean;
   createdUtc: string;
-  archivedUtc?: string;
+  archivedUtc: string | null;
 };
 
 
@@ -139,7 +139,7 @@ function authFetch(
   return fetch(url, { ...init, headers });
 }
 
-function formatDate(value?: string) {
+function formatDate(value?: string | null) {
   if (!value) return "—";
   return new Intl.DateTimeFormat("en-GB", {
     day: "2-digit",
@@ -1177,11 +1177,14 @@ function EquipmentDetailsPage({
   const [documentsError, setDocumentsError] = useState("");
 
   useEffect(() => {
+    const controller = new AbortController();
+
     setDocumentsBusy(true);
     setDocumentsError("");
     authFetch(
       `${apiBaseUrl}/equipment/${item.id}/documents`,
       token,
+      { signal: controller.signal },
     )
       .then(async response => {
         if (!response.ok)
@@ -1189,17 +1192,22 @@ function EquipmentDetailsPage({
         return response.json();
       })
       .then((items: EquipmentDocument[]) => setDocuments(items))
-      .catch(exception =>
-        setDocumentsError((exception as Error).message))
-      .finally(() => setDocumentsBusy(false));
+      .catch(exception => {
+        if ((exception as Error).name !== "AbortError")
+          setDocumentsError((exception as Error).message);
+      })
+      .finally(() => {
+        if (!controller.signal.aborted)
+          setDocumentsBusy(false);
+      });
+
+    return () => controller.abort();
   }, [item.id, token]);
 
-  const certificates = documents.filter(
-    document => document.type === "Certificate",
-  );
-  const reports = documents.filter(
-    document => document.type === "ServiceReport",
-  );
+  const [certificates, reports] = useMemo(() => [
+    documents.filter(document => document.type === "Certificate"),
+    documents.filter(document => document.type === "ServiceReport"),
+  ], [documents]);
 
   return (
     <main className="equipment-details-page">

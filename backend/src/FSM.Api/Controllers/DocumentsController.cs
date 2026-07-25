@@ -1,10 +1,11 @@
-using System.Security.Claims;
+using FSM.Api.Models;
 using FSM.Api.Services;
 using FSM.Domain.Entities;
 using FSM.Domain.Enums;
 using FSM.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
 namespace FSM.Api.Controllers;
@@ -14,7 +15,8 @@ namespace FSM.Api.Controllers;
 [Route("api/equipment/{equipmentId:guid}/documents")]
 public sealed class DocumentsController(
     FsmDbContext db,
-    DocumentStorageService storage) : ControllerBase
+    DocumentStorageService storage,
+    EquipmentDocumentAccessService access) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> List(
@@ -28,13 +30,14 @@ public sealed class DocumentsController(
                 cancellationToken);
 
         if (equipment is null)
-            return NotFound();
+            return EquipmentNotFound();
 
-        if (!await CanAccessVesselAsync(
+        if (!await access.CanAccessVesselAsync(
+            User,
             equipment.VesselId,
             cancellationToken))
         {
-            return Forbid();
+            return AccessDenied();
         }
 
         var documents = await db.EquipmentDocuments
@@ -43,10 +46,9 @@ public sealed class DocumentsController(
             .OrderBy(x => x.DocumentType)
             .ThenByDescending(x => x.IsCurrent)
             .ThenByDescending(x => x.CreatedUtc)
-            .Select(x => new
-            {
+            .Select(x => new EquipmentDocumentListItemDto(
                 x.Id,
-                Type = x.DocumentType.ToString(),
+                x.DocumentType.ToString(),
                 x.FileName,
                 x.IssueDate,
                 x.ExpiryDate,
@@ -55,8 +57,7 @@ public sealed class DocumentsController(
                 x.Remarks,
                 x.IsCurrent,
                 x.CreatedUtc,
-                x.ArchivedUtc
-            })
+                x.ArchivedUtc))
             .ToListAsync(cancellationToken);
 
         return Ok(documents);
@@ -71,24 +72,20 @@ public sealed class DocumentsController(
         CancellationToken cancellationToken)
     {
         var equipment = await db.Equipment
-            .Include(x => x.Vessel)
             .SingleOrDefaultAsync(
                 x => x.Id == equipmentId,
                 cancellationToken);
 
-        if (equipment?.Vessel is null)
-            return NotFound();
+        if (equipment is null)
+            return EquipmentNotFound();
 
-        if (!await CanAccessVesselAsync(
+        if (!await access.CanAccessVesselAsync(
+            User,
             equipment.VesselId,
             cancellationToken))
         {
-            return Forbid();
+            return AccessDenied();
         }
-
-        var oldPath = type == "report"
-            ? equipment.CurrentReportPath
-            : equipment.CurrentCertificatePath;
 
         string newPath;
 
@@ -96,27 +93,30 @@ public sealed class DocumentsController(
         {
             newPath = await storage.SavePdfAsync(
                 type,
-                equipment.Vessel.ImoNumber,
                 equipment.Id,
                 file,
                 cancellationToken);
         }
         catch (InvalidDataException exception)
         {
-            return BadRequest(new { message = exception.Message });
+            return Problem(
+                statusCode: StatusCodes.Status400BadRequest,
+                title: "Invalid document",
+                detail: exception.Message);
         }
+
+        var fileName = DocumentStorageService.SanitizeFileName(
+            file.FileName);
 
         if (type == "report")
         {
             equipment.CurrentReportPath = newPath;
-            equipment.CurrentReportFileName =
-                Path.GetFileName(file.FileName);
+            equipment.CurrentReportFileName = fileName;
         }
         else
         {
             equipment.CurrentCertificatePath = newPath;
-            equipment.CurrentCertificateFileName =
-                Path.GetFileName(file.FileName);
+            equipment.CurrentCertificateFileName = fileName;
         }
 
         var documentType = type == "report"
@@ -136,24 +136,40 @@ public sealed class DocumentsController(
             current.ArchivedUtc = now;
         }
 
-        db.EquipmentDocuments.Add(new EquipmentDocument
-        {
-            Id = Guid.NewGuid(),
-            EquipmentId = equipmentId,
-            DocumentType = documentType,
-            FileName = Path.GetFileName(file.FileName),
-            StoredFileName = newPath,
-            MimeType = "application/pdf",
-            FileSize = file.Length,
-            ExpiryDate = equipment.ExpiryDate,
-            Remarks = equipment.Remarks,
-            IsCurrent = true,
-            CreatedUtc = now
-        });
-
+        await using var transaction =
+            await db.Database.BeginTransactionAsync(cancellationToken);
         try
         {
             await db.SaveChangesAsync(cancellationToken);
+            db.EquipmentDocuments.Add(new EquipmentDocument
+            {
+                Id = Guid.NewGuid(),
+                EquipmentId = equipmentId,
+                DocumentType = documentType,
+                FileName = fileName,
+                StoredFileName = newPath,
+                MimeType = "application/pdf",
+                FileSize = file.Length,
+                ExpiryDate = equipment.ExpiryDate,
+                Remarks = equipment.Remarks,
+                IsCurrent = true,
+                CreatedUtc = now
+            });
+            await db.SaveChangesAsync(cancellationToken);
+            await transaction.CommitAsync(cancellationToken);
+        }
+        catch (DbUpdateException exception)
+            when (exception.InnerException is SqliteException
+            {
+                SqliteExtendedErrorCode: 2067
+            })
+        {
+            storage.DeleteIfExists(newPath);
+            return Problem(
+                statusCode: StatusCodes.Status409Conflict,
+                title: "Document conflict",
+                detail:
+                    "Another current document of this type was saved concurrently.");
         }
         catch
         {
@@ -163,7 +179,7 @@ public sealed class DocumentsController(
 
         return Ok(new
         {
-            fileName = Path.GetFileName(file.FileName),
+            fileName,
             type
         });
     }
@@ -181,13 +197,14 @@ public sealed class DocumentsController(
                 cancellationToken);
 
         if (equipment is null)
-            return NotFound();
+            return EquipmentNotFound();
 
-        if (!await CanAccessVesselAsync(
+        if (!await access.CanAccessVesselAsync(
+            User,
             equipment.VesselId,
             cancellationToken))
         {
-            return Forbid();
+            return AccessDenied();
         }
 
         var documentType = type == "report"
@@ -213,12 +230,21 @@ public sealed class DocumentsController(
                 : equipment.CurrentCertificateFileName);
 
         if (string.IsNullOrWhiteSpace(relativePath))
-            return NotFound();
+            return DocumentNotFound();
 
-        var absolutePath = storage.GetAbsolutePath(relativePath);
+        string absolutePath;
+
+        try
+        {
+            absolutePath = storage.GetAbsolutePath(relativePath);
+        }
+        catch (InvalidOperationException)
+        {
+            return DocumentNotFound();
+        }
 
         if (!System.IO.File.Exists(absolutePath))
-            return NotFound();
+            return DocumentNotFound();
 
         return PhysicalFile(
             absolutePath,
@@ -239,13 +265,14 @@ public sealed class DocumentsController(
                 cancellationToken);
 
         if (equipment is null)
-            return NotFound();
+            return EquipmentNotFound();
 
-        if (!await CanAccessVesselAsync(
+        if (!await access.CanAccessVesselAsync(
+            User,
             equipment.VesselId,
             cancellationToken))
         {
-            return Forbid();
+            return AccessDenied();
         }
 
         var oldPath = type == "report"
@@ -286,31 +313,18 @@ public sealed class DocumentsController(
         return NoContent();
     }
 
-    private async Task<bool> CanAccessVesselAsync(
-        Guid vesselId,
-        CancellationToken cancellationToken)
-    {
-        var role = User.FindFirstValue(ClaimTypes.Role);
+    private ObjectResult EquipmentNotFound() => Problem(
+        statusCode: StatusCodes.Status404NotFound,
+        title: "Equipment not found",
+        detail: "The requested equipment does not exist.");
 
-        if (string.Equals(
-            role,
-            "OfficeAdmin",
-            StringComparison.Ordinal))
-        {
-            return true;
-        }
+    private ObjectResult DocumentNotFound() => Problem(
+        statusCode: StatusCodes.Status404NotFound,
+        title: "Document not found",
+        detail: "The requested document or stored file does not exist.");
 
-        var userIdText =
-            User.FindFirstValue(ClaimTypes.NameIdentifier);
-
-        if (!Guid.TryParse(userIdText, out var userId))
-            return false;
-
-        return await db.UserVessels
-            .AsNoTracking()
-            .AnyAsync(
-                x => x.UserId == userId &&
-                     x.VesselId == vesselId,
-                cancellationToken);
-    }
+    private ObjectResult AccessDenied() => Problem(
+        statusCode: StatusCodes.Status403Forbidden,
+        title: "Access denied",
+        detail: "The current user cannot access documents for this equipment.");
 }

@@ -6,21 +6,18 @@ public sealed class DocumentStorageService(IConfiguration configuration)
 {
     private const long MaximumFileSize = 25L * 1024L * 1024L;
 
-    private readonly string rootPath =
+    private readonly string rootPath = Path.GetFullPath(
         configuration["Storage:RootPath"]
         ?? throw new InvalidOperationException(
-            "Storage root path is not configured.");
+            "Storage root path is not configured."));
 
     public async Task<string> SavePdfAsync(
         string documentType,
-        string imoNumber,
         Guid equipmentId,
         IFormFile file,
         CancellationToken cancellationToken)
     {
         Validate(file);
-
-        _ = imoNumber;
 
         var folderName = documentType switch
         {
@@ -84,8 +81,17 @@ public sealed class DocumentStorageService(IConfiguration configuration)
 
     public string GetAbsolutePath(string relativePath)
     {
-        var absoluteRoot = Path.GetFullPath(rootPath)
-            .TrimEnd(Path.DirectorySeparatorChar)
+        if (string.IsNullOrWhiteSpace(relativePath) ||
+            Path.IsPathRooted(relativePath))
+        {
+            throw new InvalidOperationException(
+                "Invalid document path.");
+        }
+
+        var absoluteRoot = rootPath
+            .TrimEnd(
+                Path.DirectorySeparatorChar,
+                Path.AltDirectorySeparatorChar)
             + Path.DirectorySeparatorChar;
 
         var absolutePath = Path.GetFullPath(
@@ -93,7 +99,9 @@ public sealed class DocumentStorageService(IConfiguration configuration)
 
         if (!absolutePath.StartsWith(
             absoluteRoot,
-            StringComparison.Ordinal))
+            OperatingSystem.IsWindows()
+                ? StringComparison.OrdinalIgnoreCase
+                : StringComparison.Ordinal))
         {
             throw new InvalidOperationException(
                 "Invalid document path.");
@@ -111,6 +119,30 @@ public sealed class DocumentStorageService(IConfiguration configuration)
 
         if (File.Exists(absolutePath))
             File.Delete(absolutePath);
+    }
+
+    public static string SanitizeFileName(string fileName)
+    {
+        var invalidCharacters = Path.GetInvalidFileNameChars();
+        var name = string.Concat(
+            Path.GetFileName(fileName).Select(character =>
+                char.IsControl(character) ||
+                invalidCharacters.Contains(character)
+                    ? '_'
+                    : character));
+
+        if (string.IsNullOrWhiteSpace(name))
+            return "document.pdf";
+
+        const int maximumLength = 260;
+
+        if (name.Length <= maximumLength)
+            return name;
+
+        var extension = Path.GetExtension(name);
+        return string.Concat(
+            name.AsSpan(0, maximumLength - extension.Length),
+            extension);
     }
 
     private static void Validate(IFormFile file)

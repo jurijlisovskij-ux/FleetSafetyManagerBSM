@@ -32,6 +32,7 @@ builder.Services.AddDbContext<FsmDbContext>(options =>
 
 builder.Services.AddSingleton<JwtTokenService>();
 builder.Services.AddSingleton<DocumentStorageService>();
+builder.Services.AddScoped<EquipmentDocumentAccessService>();
 builder.Services.AddSingleton<ServiceRequestExcelService>();
 builder.Services.AddSingleton<InspectionListService>();
 builder.Services.Configure<NotificationSettings>(

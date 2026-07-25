@@ -1,4 +1,4 @@
-using System.Security.Claims;
+using FSM.Api.Models;
 using FSM.Api.Services;
 using FSM.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
@@ -12,7 +12,8 @@ namespace FSM.Api.Controllers;
 [Route("api/documents")]
 public sealed class DocumentRepositoryController(
     FsmDbContext db,
-    DocumentStorageService storage) : ControllerBase
+    DocumentStorageService storage,
+    EquipmentDocumentAccessService access) : ControllerBase
 {
     [HttpGet("{id:guid}")]
     public async Task<IActionResult> GetMetadata(
@@ -21,36 +22,40 @@ public sealed class DocumentRepositoryController(
     {
         var document = await db.EquipmentDocuments
             .AsNoTracking()
-            .Include(x => x.Equipment)
-            .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+            .Where(x => x.Id == id)
+            .Select(x => new
+            {
+                Metadata = new EquipmentDocumentMetadataDto(
+                    x.Id,
+                    x.EquipmentId,
+                    x.DocumentType.ToString(),
+                    x.FileName,
+                    x.MimeType,
+                    x.FileSize,
+                    x.IssueDate,
+                    x.ExpiryDate,
+                    x.DocumentNumber,
+                    x.Issuer,
+                    x.Remarks,
+                    x.IsCurrent,
+                    x.CreatedUtc,
+                    x.ArchivedUtc),
+                x.Equipment!.VesselId
+            })
+            .SingleOrDefaultAsync(cancellationToken);
 
-        if (document?.Equipment is null)
-            return NotFound();
+        if (document is null)
+            return DocumentNotFound();
 
-        if (!await CanAccessVesselAsync(
-            document.Equipment.VesselId,
+        if (!await access.CanAccessVesselAsync(
+            User,
+            document.VesselId,
             cancellationToken))
         {
-            return Forbid();
+            return AccessDenied();
         }
 
-        return Ok(new
-        {
-            document.Id,
-            document.EquipmentId,
-            Type = document.DocumentType.ToString(),
-            document.FileName,
-            document.MimeType,
-            document.FileSize,
-            document.IssueDate,
-            document.ExpiryDate,
-            document.DocumentNumber,
-            document.Issuer,
-            document.Remarks,
-            document.IsCurrent,
-            document.CreatedUtc,
-            document.ArchivedUtc
-        });
+        return Ok(document.Metadata);
     }
 
     [HttpGet("{id:guid}/download")]
@@ -60,24 +65,41 @@ public sealed class DocumentRepositoryController(
     {
         var document = await db.EquipmentDocuments
             .AsNoTracking()
-            .Include(x => x.Equipment)
-            .SingleOrDefaultAsync(x => x.Id == id, cancellationToken);
+            .Where(x => x.Id == id)
+            .Select(x => new
+            {
+                x.StoredFileName,
+                x.MimeType,
+                x.FileName,
+                x.Equipment!.VesselId
+            })
+            .SingleOrDefaultAsync(cancellationToken);
 
-        if (document?.Equipment is null)
-            return NotFound();
+        if (document is null)
+            return DocumentNotFound();
 
-        if (!await CanAccessVesselAsync(
-            document.Equipment.VesselId,
+        if (!await access.CanAccessVesselAsync(
+            User,
+            document.VesselId,
             cancellationToken))
         {
-            return Forbid();
+            return AccessDenied();
         }
 
-        var absolutePath = storage.GetAbsolutePath(
-            document.StoredFileName);
+        string absolutePath;
+
+        try
+        {
+            absolutePath = storage.GetAbsolutePath(
+                document.StoredFileName);
+        }
+        catch (InvalidOperationException)
+        {
+            return DocumentNotFound();
+        }
 
         if (!System.IO.File.Exists(absolutePath))
-            return NotFound();
+            return DocumentNotFound();
 
         return PhysicalFile(
             absolutePath,
@@ -86,31 +108,13 @@ public sealed class DocumentRepositoryController(
             enableRangeProcessing: true);
     }
 
-    private async Task<bool> CanAccessVesselAsync(
-        Guid vesselId,
-        CancellationToken cancellationToken)
-    {
-        var role = User.FindFirstValue(ClaimTypes.Role);
+    private ObjectResult DocumentNotFound() => Problem(
+        statusCode: StatusCodes.Status404NotFound,
+        title: "Document not found",
+        detail: "The requested document or stored file does not exist.");
 
-        if (string.Equals(
-            role,
-            "OfficeAdmin",
-            StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        var userIdText =
-            User.FindFirstValue(ClaimTypes.NameIdentifier);
-
-        if (!Guid.TryParse(userIdText, out var userId))
-            return false;
-
-        return await db.UserVessels
-            .AsNoTracking()
-            .AnyAsync(
-                x => x.UserId == userId &&
-                     x.VesselId == vesselId,
-                cancellationToken);
-    }
+    private ObjectResult AccessDenied() => Problem(
+        statusCode: StatusCodes.Status403Forbidden,
+        title: "Access denied",
+        detail: "The current user cannot access this document.");
 }
