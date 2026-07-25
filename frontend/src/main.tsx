@@ -162,8 +162,8 @@ function inspectionToApi(value: Equipment["inspectionBy"]) {
 }
 
 function App() {
-  const [email, setEmail] = useState("superintendent@fsm.local");
-  const [password, setPassword] = useState("Super123!");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [user, setUser] = useState<LoginResult | null>(null);
   const [vessels, setVessels] = useState<Vessel[]>([]);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
@@ -420,6 +420,7 @@ function App() {
       `${window.location.pathname}${window.location.search}`,
     );
     setUser(null);
+    setPassword("");
     setVessels([]);
     setDashboard(null);
     setDashboardFilter("All");
@@ -463,6 +464,7 @@ function App() {
             } catch (error) {
               setError((error as Error).message);
             } finally {
+              setPassword("");
               setBusy(false);
             }
           }}

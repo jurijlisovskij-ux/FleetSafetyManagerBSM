@@ -5,26 +5,28 @@ using FSM.Api.Services;
 using FSM.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Hosting.WindowsServices;
 using Microsoft.IdentityModel.Tokens;
 
 Directory.SetCurrentDirectory(AppContext.BaseDirectory);
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Host.UseWindowsService(options =>
+if (WindowsServiceHelpers.IsWindowsService())
 {
-    options.ServiceName = "Fleet Safety Manager";
-});
+    builder.Host.UseWindowsService(options =>
+    {
+        options.ServiceName = "Fleet Safety Manager";
+    });
+}
 
 builder.Services.AddControllers();
+builder.Services.AddProblemDetails();
+builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-builder.Services.AddCors(options =>
-{
-    options.AddDefaultPolicy(policy =>
-        policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod());
-});
+builder.Services.AddCors();
 
 builder.Services.AddDbContext<FsmDbContext>(options =>
     options.UseSqlite(
@@ -42,9 +44,6 @@ builder.Services.Configure<SmtpSettings>(
 builder.Services.AddSingleton<EmailSender>();
 builder.Services.AddHostedService<DailyNotificationWorker>();
 
-var jwtKey = builder.Configuration["Jwt:Key"]
-    ?? throw new InvalidOperationException("JWT key is missing.");
-
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
     .AddJwtBearer(options =>
@@ -58,7 +57,8 @@ builder.Services
             ValidateLifetime = true,
             ValidateIssuerSigningKey = true,
             IssuerSigningKey =
-                new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
+                new SymmetricSecurityKey(Encoding.UTF8.GetBytes(
+                    builder.Configuration["Jwt:Key"]!)),
             ClockSkew = TimeSpan.FromMinutes(1)
         };
     });
@@ -67,15 +67,69 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
+var jwtKey = app.Configuration["Jwt:Key"];
+
+if (string.IsNullOrWhiteSpace(jwtKey))
+{
+    throw new InvalidOperationException(
+        "JWT signing key is missing. Configure Jwt:Key or Jwt__Key.");
+}
+
+if (jwtKey.Length < 32)
+{
+    throw new InvalidOperationException(
+        "JWT signing key must contain at least 32 characters.");
+}
+
+if (IsPlaceholderSigningKey(jwtKey))
+{
+    throw new InvalidOperationException(
+        "JWT signing key must not use a placeholder or default value.");
+}
+
+var allowedOrigins = app.Configuration
+    .GetSection("Cors:AllowedOrigins")
+    .Get<string[]>()
+    ?.Where(origin => !string.IsNullOrWhiteSpace(origin))
+    .Select(origin => origin.Trim().TrimEnd('/'))
+    .Distinct(StringComparer.OrdinalIgnoreCase)
+    .ToArray()
+    ?? [];
+
+foreach (var origin in allowedOrigins)
+{
+    if (!Uri.TryCreate(origin, UriKind.Absolute, out var uri) ||
+        (uri.Scheme != Uri.UriSchemeHttp &&
+         uri.Scheme != Uri.UriSchemeHttps))
+    {
+        throw new InvalidOperationException(
+            $"CORS allowed origin '{origin}' must be an absolute HTTP or HTTPS origin.");
+    }
+}
+
+var swaggerEnabled =
+    app.Environment.IsDevelopment() ||
+    app.Configuration.GetValue<bool>("Swagger:Enabled");
+
+app.UseExceptionHandler();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-app.UseCors();
+if (allowedOrigins.Length > 0)
+{
+    app.UseCors(policy => policy
+        .WithOrigins(allowedOrigins)
+        .AllowAnyHeader()
+        .AllowAnyMethod());
+}
 app.UseAuthentication();
 app.UseAuthorization();
 
-app.UseSwagger();
-app.UseSwaggerUI();
+if (swaggerEnabled)
+{
+    app.UseSwagger();
+    app.UseSwaggerUI();
+}
 
 app.MapControllers();
 app.MapFallbackToFile("index.html");
@@ -85,7 +139,14 @@ using (var scope = app.Services.CreateScope())
     var db = scope.ServiceProvider.GetRequiredService<FsmDbContext>();
     await db.Database.EnsureCreatedAsync();
     await db.Database.MigrateAsync();
-    await SeedData.InitializeAsync(db);
+    await SeedData.InitializeAsync(db, app.Configuration);
 }
 
+static bool IsPlaceholderSigningKey(string value) =>
+    value.Contains("CHANGE_THIS", StringComparison.OrdinalIgnoreCase) ||
+    value.Contains("PLACEHOLDER", StringComparison.OrdinalIgnoreCase) ||
+    value.Contains("DEFAULT", StringComparison.OrdinalIgnoreCase);
+
 app.Run();
+
+public partial class Program;
