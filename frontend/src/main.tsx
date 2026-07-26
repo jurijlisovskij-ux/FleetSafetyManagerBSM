@@ -51,10 +51,25 @@ type NavigationView =
   | "dashboard"
   | "equipment"
   | "inspections"
+  | "serviceRequests"
   | "medical"
   | "administration"
   | "synchronization"
   | "profile";
+
+type SystemSettings = {
+  companyName: string;
+  companyLogo: string;
+  defaultPdfFooter: string;
+  notificationDays: number;
+  inspectionDraftWarningDays: number;
+  maximumDocumentUploadBytes: number;
+  maximumInspectionPhotoBytes: number;
+  maximumServiceRequestUploadBytes: number;
+  documentStoragePath: string;
+  timeZone: string;
+  dateFormat: string;
+};
 
 type Equipment = {
   id: string;
@@ -122,6 +137,28 @@ type DashboardData = {
   vesselRows: DashboardVesselRow[];
   upcoming: DashboardUpcoming[];
 };
+type FleetDashboardData = {
+  counts: {
+    equipmentTotal: number; equipmentOk: number; equipmentSoon: number;
+    equipmentOverdue: number; inspectionDraft: number; inspectionFinalized: number;
+    criticalOpen: number; urgentOpen: number; normalOpen: number;
+    serviceDraft: number; serviceReady: number; serviceSent: number;
+    serviceCompleted: number; serviceCancelled: number;
+  };
+  vessels: Array<{
+    vesselId: string; vesselName: string; imoNumber: string;
+    equipmentOverdue: number; criticalFindings: number; openFindings: number;
+    draftInspectionReports: number; activeServiceRequests: number;
+    lastSynchronizationUtc: string | null; overallStatus: "Green" | "Yellow" | "Red";
+  }>;
+  charts: Array<{ name: string; values: Array<{ label: string; value: number }> }>;
+  notifications: Array<{
+    source: string; severity: "Green" | "Yellow" | "Red";
+    vesselId: string; vesselName: string; title: string; detail: string; eventUtc: string;
+  }>;
+  vesselOptions: Array<{ id: string; name: string }>;
+  superintendentOptions: Array<{ id: string; name: string }>;
+};
 
 const categories: Equipment["category"][] = [
   "LSA",
@@ -188,6 +225,34 @@ type InspectionPdf = {
   id: string; versionNumber: number; fileName: string; fileSize: number;
   generatedUtc: string; generatedBy: string; isCurrent: boolean;
 };
+type ManagedRequestSummary = {
+  id: string; requestNumber: string; vesselId: string; vesselName: string;
+  requestDate: string; subject: string; preferredPort: string | null;
+  status: "Draft" | "Ready" | "Sent" | "Completed" | "Cancelled";
+  itemCount: number; requestedBy: string; updatedUtc: string;
+};
+type ManagedRequestItem = {
+  id: string; sequenceNumber: number; itemType: "Equipment" | "InspectionFinding" | "Manual";
+  equipmentId: string | null; inspectionFindingId: string | null;
+  inspectionReportNumber: string | null; inspectionFindingSequence: number | null;
+  title: string; category: string | null; maker: string | null; model: string | null;
+  serialNumber: string | null; location: string | null; currentDueDate: string | null;
+  priority: string | null; description: string | null;
+  serviceDescription: string; remarks: string | null;
+};
+type ManagedAttachment = {
+  id: string; originalFileName: string; mimeType: string; fileSize: number;
+  description: string | null; createdUtc: string; createdBy: string;
+};
+type ManagedServiceRequest = ManagedRequestSummary & {
+  imoNumber: string; contactName: string; contactEmail: string; contactPhone: string | null;
+  expectedArrivalDate: string | null; expectedDepartureDate: string | null;
+  serviceCompany: string | null; attentionTo: string | null;
+  generalRemarks: string | null; invoicingDetails: string | null;
+  createdUtc: string; sentUtc: string | null; completedUtc: string | null;
+  cancelledUtc: string | null; items: ManagedRequestItem[];
+  attachments: ManagedAttachment[];
+};
 
 function formatDateTime(value: string) {
   return new Intl.DateTimeFormat("en-GB", {
@@ -202,6 +267,14 @@ function App() {
   const [user, setUser] = useState<LoginResult | null>(null);
   const [vessels, setVessels] = useState<Vessel[]>([]);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
+  const [fleetDashboard, setFleetDashboard] =
+    useState<FleetDashboardData | null>(null);
+  const [fleetVesselFilter, setFleetVesselFilter] = useState("");
+  const [fleetSuperintendentFilter, setFleetSuperintendentFilter] = useState("");
+  const [fleetStatusFilter, setFleetStatusFilter] = useState("");
+  const [fleetCategoryFilter, setFleetCategoryFilter] = useState("");
+  const [fleetYearFilter, setFleetYearFilter] = useState("");
+  const [fleetSearch, setFleetSearch] = useState("");
   const [dashboardFilter, setDashboardFilter] =
     useState<"All" | "OK" | "Soon" | "Overdue">("All");
   const [currentVessel, setCurrentVessel] = useState<Vessel | null>(null);
@@ -283,6 +356,29 @@ function App() {
       })
       .catch(error => setError((error as Error).message));
   }, [user]);
+
+  useEffect(() => {
+    if (!user) return;
+    const parameters = new URLSearchParams();
+    if (fleetVesselFilter) parameters.set("vesselId", fleetVesselFilter);
+    if (fleetSuperintendentFilter)
+      parameters.set("superintendentId", fleetSuperintendentFilter);
+    if (fleetStatusFilter) parameters.set("status", fleetStatusFilter);
+    if (fleetCategoryFilter) parameters.set("category", fleetCategoryFilter);
+    if (fleetYearFilter) parameters.set("year", fleetYearFilter);
+    if (fleetSearch.trim()) parameters.set("search", fleetSearch.trim());
+    const suffix = parameters.size ? `?${parameters}` : "";
+    authFetch(`${apiBaseUrl}/fleet-dashboard${suffix}`, user.token)
+      .then(async response => {
+        if (!response.ok) throw new Error("Unable to load fleet dashboard.");
+        return response.json();
+      })
+      .then(setFleetDashboard)
+      .catch(reason => setError((reason as Error).message));
+  }, [
+    user, fleetVesselFilter, fleetSuperintendentFilter, fleetStatusFilter,
+    fleetCategoryFilter, fleetYearFilter, fleetSearch,
+  ]);
 
   useEffect(() => {
     if (!user || !currentVessel) return;
@@ -444,11 +540,14 @@ function App() {
     }
     setShowUserAdministration(false);
     setNavigationView(view);
-    if (view === "administration")
-      setShowUserAdministration(true);
   }
 
   function signOut() {
+    if (user)
+      void authFetch(`${apiBaseUrl}/auth/logout`, user.token, {
+        method: "POST",
+        keepalive: true,
+      });
     window.history.replaceState(
       {},
       "",
@@ -458,6 +557,7 @@ function App() {
     setPassword("");
     setVessels([]);
     setDashboard(null);
+    setFleetDashboard(null);
     setDashboardFilter("All");
     closeWorkspace();
     setShowUserAdministration(false);
@@ -519,7 +619,7 @@ function App() {
   return (
     <div className="application">
       <header className="topbar">
-        <div><strong>Fleet Safety Manager</strong><span>Version RC18</span></div>
+        <div><strong>Fleet Safety Manager</strong><span>Version 1.0.0-rc1</span></div>
         <div className="session">
           <span>{user.fullName} · {user.role}</span>
           {currentVessel &&
@@ -559,6 +659,7 @@ function App() {
           <SidebarItem icon="⌂" label="Dashboard" active={navigationView === "dashboard" && !currentVessel} collapsed={sidebarCollapsed} onClick={() => navigate("dashboard")} />
           <SidebarItem icon="☷" label="Equipment List" active={navigationView === "equipment" || !!currentVessel} collapsed={sidebarCollapsed} onClick={() => navigate("equipment")} />
           <SidebarItem icon="▣" label="Inspection Reports" active={navigationView === "inspections"} collapsed={sidebarCollapsed} onClick={() => navigate("inspections")} />
+          <SidebarItem icon="⌁" label="Service Requests" active={navigationView === "serviceRequests"} collapsed={sidebarCollapsed} onClick={() => navigate("serviceRequests")} />
           <SidebarItem icon="✚" label="Medical Chest" active={navigationView === "medical"} collapsed={sidebarCollapsed} onClick={() => navigate("medical")} />
           {user.role === "OfficeAdmin" &&
             <SidebarItem icon="⚙" label="Administration" active={navigationView === "administration"} collapsed={sidebarCollapsed} onClick={() => navigate("administration")} />}
@@ -579,6 +680,25 @@ function App() {
           </div>
 
           {error && <div className="error">{error}</div>}
+
+          {fleetDashboard &&
+            <FleetOperationsDashboard
+              data={fleetDashboard}
+              role={user.role}
+              vesselFilter={fleetVesselFilter}
+              superintendentFilter={fleetSuperintendentFilter}
+              statusFilter={fleetStatusFilter}
+              categoryFilter={fleetCategoryFilter}
+              yearFilter={fleetYearFilter}
+              search={fleetSearch}
+              onVesselFilter={setFleetVesselFilter}
+              onSuperintendentFilter={setFleetSuperintendentFilter}
+              onStatusFilter={setFleetStatusFilter}
+              onCategoryFilter={setFleetCategoryFilter}
+              onYearFilter={setFleetYearFilter}
+              onSearch={setFleetSearch}
+              onOpenVessel={setFleetVesselFilter}
+            />}
 
           <div className="dashboard-cards">
             <button className="dashboard-card" onClick={() => setDashboardFilter("All")}>
@@ -706,6 +826,8 @@ function App() {
         </main>
       ) : navigationView === "inspections" ? (
         <InspectionReportsPage user={user} vessels={vessels} />
+      ) : navigationView === "serviceRequests" ? (
+        <ManagedServiceRequestsPage user={user} vessels={vessels} />
       ) : navigationView === "equipment" &&
           currentVessel &&
           detailEquipment ? (
@@ -1010,10 +1132,7 @@ function App() {
           </section>
         </main>
       ) : (
-        <NavigationPage
-          title="Administration"
-          description="User administration is open."
-        />
+        <AdministrationCenter token={user.token} />
       )}
         </div>
       </div>
@@ -1663,6 +1782,258 @@ function CopyEquipmentDialog({
       </div>
     </div>
   );
+}
+
+function AdministrationCenter({ token }: { token: string }) {
+  const [tab, setTab] = useState<
+    "settings" | "backups" | "health" | "audit" | "maintenance" |
+    "diagnostics" | "exports"
+  >("settings");
+  const [settings, setSettings] = useState<SystemSettings | null>(null);
+  const [backups, setBackups] = useState<any[]>([]);
+  const [health, setHealth] = useState<any>(null);
+  const [diagnostics, setDiagnostics] = useState<any>(null);
+  const [auditItems, setAuditItems] = useState<any[]>([]);
+  const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function read(path: string) {
+    const response = await authFetch(`${apiBaseUrl}/administration/${path}`, token);
+    if (!response.ok) throw new Error(await administrationResponseMessage(response));
+    return response.json();
+  }
+
+  async function refresh() {
+    setBusy(true);
+    setMessage("");
+    try {
+      if (tab === "settings") setSettings(await read("settings"));
+      if (tab === "backups") setBackups(await read("backups"));
+      if (tab === "health") setHealth(await read("health"));
+      if (tab === "diagnostics") setDiagnostics(await read("diagnostics"));
+      if (tab === "audit") {
+        const result = await read("audit?pageSize=200");
+        setAuditItems(result.items);
+      }
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Administration request failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  useEffect(() => { void refresh(); }, [tab]);
+
+  async function saveSettings(event: React.FormEvent) {
+    event.preventDefault();
+    if (!settings) return;
+    setBusy(true); setMessage("");
+    try {
+      const response = await authFetch(`${apiBaseUrl}/administration/settings`, token, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(settings),
+      });
+      if (!response.ok) throw new Error(await administrationResponseMessage(response));
+      setMessage("Settings saved. Runtime service changes apply after restart.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Unable to save settings.");
+    } finally { setBusy(false); }
+  }
+
+  async function createBackup(type: string) {
+    setBusy(true); setMessage("");
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/administration/backups/${type}`, token, { method: "POST" });
+      if (!response.ok) throw new Error(await administrationResponseMessage(response));
+      setMessage(`${type} backup created.`);
+      setBackups(await read("backups"));
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Backup failed.");
+    } finally { setBusy(false); }
+  }
+
+  async function restoreBackup(id: string) {
+    if (!window.confirm("Validate this backup for offline restore?")) return;
+    setBusy(true); setMessage("");
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/administration/backups/${id}/restore`, token, { method: "POST" });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail ?? result.title ?? "Restore validation failed.");
+      setMessage(result.message);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Restore validation failed.");
+    } finally { setBusy(false); }
+  }
+
+  async function maintenance(operation: string) {
+    setBusy(true); setMessage("");
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/administration/maintenance/${operation}`, token, { method: "POST" });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail ?? result.title ?? "Maintenance failed.");
+      setMessage(result.details);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Maintenance failed.");
+    } finally { setBusy(false); }
+  }
+
+  async function downloadExport(name: string, format: "csv" | "xlsx") {
+    setBusy(true); setMessage("");
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/administration/exports/${name}.${format}`, token);
+      if (!response.ok) throw new Error(await administrationResponseMessage(response));
+      const url = URL.createObjectURL(await response.blob());
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = response.headers.get("content-disposition")
+        ?.match(/filename="?([^";]+)"?/)?.[1] ?? `${name}.${format}`;
+      anchor.click(); URL.revokeObjectURL(url);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Export failed.");
+    } finally { setBusy(false); }
+  }
+
+  const tabs = [
+    ["settings", "Settings"], ["backups", "Backups"], ["health", "Health"],
+    ["audit", "Audit Log"], ["maintenance", "Maintenance"],
+    ["diagnostics", "Diagnostics"], ["exports", "Export"],
+  ] as const;
+
+  return <main className="navigation-page administration-center">
+    <section className="navigation-card">
+      <div className="section-heading">
+        <div><h1>Administration</h1><p>Deployment, backup and system management.</p></div>
+        <button type="button" className="secondary" onClick={() => void refresh()}
+          disabled={busy}>Refresh</button>
+      </div>
+      <nav className="administration-tabs" aria-label="Administration sections">
+        {tabs.map(([value, label]) =>
+          <button key={value} type="button"
+            className={tab === value ? "active" : ""}
+            onClick={() => setTab(value)}>{label}</button>)}
+      </nav>
+      {message && <div className="inline-message">{message}</div>}
+      {busy && <p className="muted">Working…</p>}
+
+      {tab === "settings" && settings &&
+        <form className="administration-form" onSubmit={saveSettings}>
+          <label>Company Name<input value={settings.companyName}
+            onChange={e => setSettings({ ...settings, companyName: e.target.value })} /></label>
+          <label>Company Logo Path<input value={settings.companyLogo}
+            onChange={e => setSettings({ ...settings, companyLogo: e.target.value })} /></label>
+          <label>Default PDF Footer<input value={settings.defaultPdfFooter}
+            onChange={e => setSettings({ ...settings, defaultPdfFooter: e.target.value })} /></label>
+          <label>Notification Days<input type="number" value={settings.notificationDays}
+            onChange={e => setSettings({ ...settings, notificationDays: Number(e.target.value) })} /></label>
+          <label>Inspection Draft Warning Days<input type="number"
+            value={settings.inspectionDraftWarningDays}
+            onChange={e => setSettings({ ...settings,
+              inspectionDraftWarningDays: Number(e.target.value) })} /></label>
+          <label>Maximum Document Upload Bytes<input type="number"
+            value={settings.maximumDocumentUploadBytes}
+            onChange={e => setSettings({ ...settings,
+              maximumDocumentUploadBytes: Number(e.target.value) })} /></label>
+          <label>Maximum Inspection Photo Bytes<input type="number"
+            value={settings.maximumInspectionPhotoBytes}
+            onChange={e => setSettings({ ...settings,
+              maximumInspectionPhotoBytes: Number(e.target.value) })} /></label>
+          <label>Maximum Service Request Upload Bytes<input type="number"
+            value={settings.maximumServiceRequestUploadBytes}
+            onChange={e => setSettings({ ...settings,
+              maximumServiceRequestUploadBytes: Number(e.target.value) })} /></label>
+          <label>Document Storage Path<input value={settings.documentStoragePath}
+            onChange={e => setSettings({ ...settings, documentStoragePath: e.target.value })} /></label>
+          <label>Time Zone<input value={settings.timeZone}
+            onChange={e => setSettings({ ...settings, timeZone: e.target.value })} /></label>
+          <label>Date Format<input value={settings.dateFormat}
+            onChange={e => setSettings({ ...settings, dateFormat: e.target.value })} /></label>
+          <div><button type="submit" disabled={busy}>Save Settings</button></div>
+        </form>}
+
+      {tab === "backups" && <div>
+        <div className="button-row">
+          {["Database", "Documents", "Full"].map(type =>
+            <button key={type} type="button" onClick={() => void createBackup(type)}
+              disabled={busy}>{type} Backup</button>)}
+        </div>
+        <div className="table-scroll"><table><thead><tr>
+          <th>Date</th><th>Type</th><th>Size</th><th>Created by</th><th>Action</th>
+        </tr></thead><tbody>
+          {backups.map(item => <tr key={item.id}>
+            <td>{formatDateTime(item.createdUtc)}</td><td>{item.backupType}</td>
+            <td>{formatBytes(item.fileSize)}</td><td>{item.createdByName}</td>
+            <td><button type="button" className="secondary"
+              onClick={() => void restoreBackup(item.id)}>Validate Restore</button></td>
+          </tr>)}
+          {!backups.length && <tr><td colSpan={5}>No backups available.</td></tr>}
+        </tbody></table></div>
+      </div>}
+
+      {tab === "health" && health && <AdminObject value={health} />}
+      {tab === "diagnostics" && diagnostics && <AdminObject value={diagnostics} />}
+      {tab === "audit" && <div className="table-scroll"><table><thead><tr>
+        <th>Date</th><th>User</th><th>Action</th><th>Object</th><th>Details</th>
+      </tr></thead><tbody>{auditItems.map(item => <tr key={item.id}>
+        <td>{formatDateTime(item.createdUtc)}</td><td>{item.userName}</td>
+        <td>{item.action}</td><td>{item.objectType} {item.objectId}</td>
+        <td>{item.details || "—"}</td>
+      </tr>)}
+      {!auditItems.length && <tr><td colSpan={5}>No audit entries.</td></tr>}
+      </tbody></table></div>}
+
+      {tab === "maintenance" && <div className="administration-actions">
+        {[
+          ["integrity-check", "Integrity Check"], ["rebuild-indexes", "Rebuild Indexes"],
+          ["vacuum", "Vacuum SQLite"], ["cleanup-orphan-files", "Cleanup Orphan Files"],
+          ["cleanup-orphan-metadata", "Cleanup Orphan Metadata"],
+        ].map(([value, label]) => <button key={value} type="button"
+          onClick={() => void maintenance(value)} disabled={busy}>{label}</button>)}
+      </div>}
+
+      {tab === "exports" && <div className="export-grid">
+        {["audit", "settings", "fleet-summary", "dashboard-statistics"].map(name =>
+          <article key={name} className="navigation-card compact">
+            <strong>{name.replace(/-/g, " ")}</strong>
+            <div className="button-row">
+              <button type="button" onClick={() => void downloadExport(name, "csv")}>CSV</button>
+              <button type="button" onClick={() => void downloadExport(name, "xlsx")}>Excel</button>
+            </div>
+          </article>)}
+      </div>}
+    </section>
+  </main>;
+}
+
+async function administrationResponseMessage(response: Response) {
+  const body = await response.json().catch(() => null);
+  return body?.detail ?? body?.title ?? body?.message ?? "Administration request failed.";
+}
+
+function AdminObject({ value }: { value: Record<string, any> }) {
+  return <div className="admin-object-grid">
+    {Object.entries(value).map(([group, details]) =>
+      <article className="navigation-card compact" key={group}>
+        <h2>{group.replace(/([A-Z])/g, " $1")}</h2>
+        {typeof details === "object" && details !== null
+          ? Object.entries(details).map(([key, item]) =>
+            <div className="admin-property" key={key}>
+              <span>{key.replace(/([A-Z])/g, " $1")}</span>
+              <strong>{String(item)}</strong>
+            </div>)
+          : <strong>{String(details)}</strong>}
+      </article>)}
+  </div>;
+}
+
+function formatBytes(value: number) {
+  if (value < 1024) return `${value} B`;
+  if (value < 1048576) return `${(value / 1024).toFixed(1)} KB`;
+  return `${(value / 1048576).toFixed(1)} MB`;
 }
 
 function UserAdministrationDialog({
@@ -3521,6 +3892,417 @@ function DocumentControl({
       </div>
     </div>
   );
+}
+
+function FleetOperationsDashboard({
+  data, role, vesselFilter, superintendentFilter, statusFilter,
+  categoryFilter, yearFilter, search, onVesselFilter,
+  onSuperintendentFilter, onStatusFilter, onCategoryFilter,
+  onYearFilter, onSearch, onOpenVessel,
+}: {
+  data: FleetDashboardData; role: LoginResult["role"];
+  vesselFilter: string; superintendentFilter: string; statusFilter: string;
+  categoryFilter: string; yearFilter: string; search: string;
+  onVesselFilter: (value: string) => void;
+  onSuperintendentFilter: (value: string) => void;
+  onStatusFilter: (value: string) => void;
+  onCategoryFilter: (value: string) => void;
+  onYearFilter: (value: string) => void;
+  onSearch: (value: string) => void;
+  onOpenVessel: (id: string) => void;
+}) {
+  const countGroups = [
+    ["Equipment", [
+      ["Total", data.counts.equipmentTotal], ["OK", data.counts.equipmentOk],
+      ["Soon", data.counts.equipmentSoon], ["Overdue", data.counts.equipmentOverdue],
+    ]],
+    ["Inspection Reports", [
+      ["Draft", data.counts.inspectionDraft],
+      ["Finalized", data.counts.inspectionFinalized],
+    ]],
+    ["Open Findings", [
+      ["Critical", data.counts.criticalOpen], ["Urgent", data.counts.urgentOpen],
+      ["Normal", data.counts.normalOpen],
+    ]],
+    ["Service Requests", [
+      ["Draft", data.counts.serviceDraft], ["Ready", data.counts.serviceReady],
+      ["Sent", data.counts.serviceSent], ["Completed", data.counts.serviceCompleted],
+      ["Cancelled", data.counts.serviceCancelled],
+    ]],
+  ] as Array<[string, Array<[string, number]>]>;
+  const currentYear = new Date().getFullYear();
+  return <div className="fleet-dashboard">
+    <section className="fleet-dashboard-filters" aria-label="Fleet dashboard filters">
+      <label>Search<input value={search} onChange={e => onSearch(e.target.value)}
+        placeholder="Vessel or IMO" /></label>
+      <label>Vessel<select value={vesselFilter} onChange={e => onVesselFilter(e.target.value)}>
+        <option value="">All</option>{data.vesselOptions.map(x =>
+          <option key={x.id} value={x.id}>{x.name}</option>)}</select></label>
+      {role === "OfficeAdmin" && <label>Superintendent<select value={superintendentFilter}
+        onChange={e => onSuperintendentFilter(e.target.value)}>
+        <option value="">All</option>{data.superintendentOptions.map(x =>
+          <option key={x.id} value={x.id}>{x.name}</option>)}</select></label>}
+      <label>Status<select value={statusFilter} onChange={e => onStatusFilter(e.target.value)}>
+        <option value="">All</option><option>Green</option><option>Yellow</option><option>Red</option>
+      </select></label>
+      <label>Category<select value={categoryFilter} onChange={e => onCategoryFilter(e.target.value)}>
+        <option value="">All</option>{categories.map(x => <option key={x}>{x}</option>)}
+      </select></label>
+      <label>Year<select value={yearFilter} onChange={e => onYearFilter(e.target.value)}>
+        <option value="">All</option>{Array.from({length: 6}, (_, i) => currentYear - i)
+          .map(x => <option key={x}>{x}</option>)}</select></label>
+    </section>
+    <div className="fleet-count-groups">{countGroups.map(([title, values]) =>
+      <section className="fleet-count-group" key={title}><h2>{title}</h2>
+        <div>{values.map(([label, value]) => <div className={`fleet-count-card ${label.toLowerCase()}`}
+          key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>
+      </section>)}</div>
+    <section className="dashboard-section">
+      <div className="dashboard-section-heading"><h2>Fleet Operational Status</h2>
+        <span className="muted">Select a vessel to focus its dashboard.</span></div>
+      {data.vessels.length === 0 ? <div className="empty-state">No vessels match these filters.</div> :
+        <div className="table-scroll"><table className="dashboard-table fleet-table">
+          <thead><tr><th>Vessel</th><th>IMO</th><th>Equipment overdue</th>
+            <th>Critical findings</th><th>Open findings</th><th>Draft inspections</th>
+            <th>Active service requests</th><th>Last synchronization</th><th>Overall</th></tr></thead>
+          <tbody>{data.vessels.map(x => <tr key={x.vesselId}
+            onClick={() => onOpenVessel(x.vesselId)}>
+            <td><strong>{x.vesselName}</strong></td><td>{x.imoNumber}</td>
+            <td>{x.equipmentOverdue}</td><td>{x.criticalFindings}</td>
+            <td>{x.openFindings}</td><td>{x.draftInspectionReports}</td>
+            <td>{x.activeServiceRequests}</td>
+            <td>{x.lastSynchronizationUtc ? formatDateTime(x.lastSynchronizationUtc) : "Not available"}</td>
+            <td><span className={`fleet-status ${x.overallStatus.toLowerCase()}`}>{x.overallStatus}</span></td>
+          </tr>)}</tbody></table></div>}
+    </section>
+    <div className="fleet-dashboard-lower">
+      <section className="dashboard-section"><h2>Operational Charts</h2>
+        <div className="fleet-charts">{data.charts.map(chart => {
+          const maximum = Math.max(1, ...chart.values.map(x => x.value));
+          return <article key={chart.name}><h3>{chart.name}</h3>
+            {chart.values.map(value => <div className="fleet-chart-row" key={value.label}>
+              <span>{value.label}</span><div><i style={{width: `${value.value / maximum * 100}%`}} /></div>
+              <strong>{value.value}</strong></div>)}</article>;
+        })}</div></section>
+      <section className="dashboard-section notification-center">
+        <div className="dashboard-section-heading"><h2>Notifications</h2>
+          <span className="muted">Newest first</span></div>
+        {data.notifications.length === 0 ? <div className="empty-state">No operational notifications.</div> :
+          <div>{data.notifications.map((item, index) =>
+            <article key={`${item.source}-${item.vesselId}-${item.eventUtc}-${index}`}
+              className={`notification-item ${item.severity.toLowerCase()}`}>
+              <span>{item.source}</span><div><strong>{item.title}</strong>
+                <p>{item.vesselName} · {item.detail}</p></div>
+              <time>{formatDateTime(item.eventUtc)}</time>
+            </article>)}</div>}
+      </section>
+    </div>
+  </div>;
+}
+
+function ManagedServiceRequestsPage({ user, vessels }: {
+  user: LoginResult; vessels: Vessel[];
+}) {
+  const [items, setItems] = useState<ManagedRequestSummary[]>([]);
+  const [request, setRequest] = useState<ManagedServiceRequest | null>(null);
+  const [pdfs, setPdfs] = useState<InspectionPdf[]>([]);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [createOpen, setCreateOpen] = useState(false);
+  const [selection, setSelection] = useState<"Equipment" | "InspectionFinding" | null>(null);
+  const [statusFilter, setStatusFilter] = useState("All");
+  const [vesselFilter, setVesselFilter] = useState("All");
+  const [yearFilter, setYearFilter] = useState("All");
+  const [search, setSearch] = useState("");
+  async function api(path: string, init: RequestInit = {}) {
+    const response = await authFetch(`${apiBaseUrl}${path}`, user.token, init);
+    if (!response.ok) {
+      const body = await response.json().catch(() => null);
+      throw new Error(body?.detail ?? body?.title ?? "Request failed.");
+    }
+    return response;
+  }
+  async function list() {
+    setBusy(true); setError("");
+    try { setItems(await (await api("/service-requests")).json()); }
+    catch (reason) { setError((reason as Error).message); }
+    finally { setBusy(false); }
+  }
+  async function open(id: string) {
+    setBusy(true); setError("");
+    try {
+      const [detail, versions] = await Promise.all([
+        api(`/service-requests/${id}`).then(x => x.json()),
+        api(`/service-requests/${id}/pdf-versions`).then(x => x.json()),
+      ]);
+      setRequest(detail); setPdfs(versions);
+    } catch (reason) { setError((reason as Error).message); }
+    finally { setBusy(false); }
+  }
+  async function post(path: string, body?: unknown) {
+    setBusy(true); setError("");
+    try {
+      await api(path, { method: "POST",
+        headers: body ? { "Content-Type": "application/json" } : undefined,
+        body: body ? JSON.stringify(body) : undefined });
+      if (request) await open(request.id); else await list();
+    } catch (reason) { setError((reason as Error).message); }
+    finally { setBusy(false); }
+  }
+  async function download(path: string, name: string) {
+    try {
+      const response = await api(path); const url = URL.createObjectURL(await response.blob());
+      const anchor = document.createElement("a"); anchor.href = url; anchor.download = name;
+      document.body.appendChild(anchor); anchor.click(); anchor.remove(); URL.revokeObjectURL(url);
+    } catch (reason) { setError((reason as Error).message); }
+  }
+  useEffect(() => { void list(); }, []);
+  const years = [...new Set(items.map(x => x.requestDate.slice(0, 4)))].sort().reverse();
+  const visible = items.filter(x =>
+    (statusFilter === "All" || x.status === statusFilter) &&
+    (vesselFilter === "All" || x.vesselId === vesselFilter) &&
+    (yearFilter === "All" || x.requestDate.startsWith(yearFilter)) &&
+    (!search.trim() || `${x.requestNumber} ${x.subject}`.toLowerCase()
+      .includes(search.trim().toLowerCase())));
+  if (!request) return <main className="workspace managed-requests">
+    <div className="workspace-heading"><div><h1>Service Requests</h1>
+      <p className="muted">Vessel equipment servicing requests and PDF versions.</p></div>
+      <button className="primary" onClick={() => setCreateOpen(true)}>Create Request</button></div>
+    {error && <div className="error">{error}</div>}
+    <section className="equipment-toolbar">
+      <label>Search<input value={search} onChange={e => setSearch(e.target.value)}
+        placeholder="Request number or subject" /></label>
+      <label>Vessel<select value={vesselFilter} onChange={e => setVesselFilter(e.target.value)}>
+        <option>All</option>{vessels.map(x => <option key={x.id} value={x.id}>{x.vesselName}</option>)}</select></label>
+      <label>Status<select value={statusFilter} onChange={e => setStatusFilter(e.target.value)}>
+        <option>All</option>{["Draft","Ready","Sent","Completed","Cancelled"].map(x => <option key={x}>{x}</option>)}</select></label>
+      <label>Year<select value={yearFilter} onChange={e => setYearFilter(e.target.value)}>
+        <option>All</option>{years.map(x => <option key={x}>{x}</option>)}</select></label>
+    </section>
+    {busy ? <div className="loading">Loading service requests...</div> :
+      visible.length === 0 ? <div className="empty-state">No service requests available.</div> :
+      <div className="table-scroll"><table className="equipment-table">
+        <thead><tr><th>Request number</th><th>Vessel</th><th>Date</th><th>Subject</th>
+          <th>Port</th><th>Status</th><th>Items</th><th>Created by</th><th>Updated</th><th>Actions</th></tr></thead>
+        <tbody>{visible.map(x => <tr key={x.id}><td><strong>{x.requestNumber}</strong></td>
+          <td>{x.vesselName}</td><td>{formatDate(x.requestDate)}</td><td>{x.subject}</td>
+          <td>{x.preferredPort ?? "—"}</td><td><span className="status">{x.status}</span></td>
+          <td>{x.itemCount}</td><td>{x.requestedBy}</td><td>{formatDateTime(x.updatedUtc)}</td>
+          <td className="row-actions"><button onClick={() => void open(x.id)}>Open</button>
+            <button onClick={async () => { await post(`/service-requests/${x.id}/generate-pdf`); await open(x.id); }}>Generate PDF</button></td>
+        </tr>)}</tbody></table></div>}
+    {createOpen && <ManagedRequestCreate user={user} vessels={vessels}
+      onClose={() => setCreateOpen(false)}
+      onCreated={id => { setCreateOpen(false); void open(id); }} />}
+  </main>;
+  const editable = request.status === "Draft" || request.status === "Ready";
+  const crewEditable = user.role !== "Crew" || request.status === "Draft";
+  return <main className="workspace managed-requests">
+    <div className="workspace-heading"><div>
+      <button className="back-button" onClick={() => { setRequest(null); void list(); }}>← Service Requests</button>
+      <h1>{request.requestNumber}</h1><p className="muted">{request.vesselName} · IMO {request.imoNumber} · {request.status}</p></div>
+      <div className="workspace-actions">
+        {editable && crewEditable && <button onClick={async () => {
+          const subject = window.prompt("Subject:", request.subject);
+          if (!subject) return;
+          const contactName = window.prompt("Contact name:", request.contactName);
+          if (!contactName) return;
+          const contactEmail = window.prompt("Contact email:", request.contactEmail);
+          if (!contactEmail) return;
+          const preferredPort = window.prompt(
+            "Preferred port (leave blank if not required):",
+            request.preferredPort ?? "");
+          if (preferredPort === null) return;
+          await api(`/service-requests/${request.id}`, {
+            method: "PUT", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              requestDate: request.requestDate, subject, contactName, contactEmail,
+              contactPhone: request.contactPhone, preferredPort: preferredPort || null,
+              expectedArrivalDate: request.expectedArrivalDate,
+              expectedDepartureDate: request.expectedDepartureDate,
+              serviceCompany: request.serviceCompany, attentionTo: request.attentionTo,
+              generalRemarks: request.generalRemarks,
+              invoicingDetails: request.invoicingDetails,
+            }),
+          });
+          await open(request.id);
+        }}>Edit Request</button>}
+        {editable && <button onClick={() =>
+          void post(`/service-requests/${request.id}/refresh-from-vessel`)}>
+          Refresh from Vessel
+        </button>}
+        {editable && crewEditable && <button onClick={() => setSelection("Equipment")}>Add Equipment</button>}
+        {editable && user.role !== "Crew" && <button onClick={() => setSelection("InspectionFinding")}>Add Finding</button>}
+        {editable && crewEditable && <button onClick={async () => {
+          const title = window.prompt("Manual item title:"); if (!title) return;
+          const serviceDescription = window.prompt("Required service:"); if (!serviceDescription) return;
+          await post(`/service-requests/${request.id}/items`, {
+            itemType: "Manual", title, location: null, description: null,
+            serviceDescription, remarks: null,
+          });
+        }}>Add Manual Item</button>}
+        <button onClick={() => void post(`/service-requests/${request.id}/generate-pdf`)}>Generate PDF</button>
+        {request.status === "Draft" && user.role !== "Crew" &&
+          <button className="primary" onClick={() => void post(`/service-requests/${request.id}/mark-ready`)}>Mark Ready</button>}
+        {request.status === "Ready" && user.role !== "Crew" &&
+          <button className="primary" onClick={() => void post(`/service-requests/${request.id}/mark-sent`)}>Mark Sent</button>}
+        {request.status === "Sent" && user.role !== "Crew" &&
+          <button className="primary" onClick={() => void post(`/service-requests/${request.id}/complete`)}>Complete</button>}
+        {editable && user.role !== "Crew" && <button className="danger" onClick={() => {
+          const reason = window.prompt("Cancellation reason:");
+          if (reason) void post(`/service-requests/${request.id}/cancel`, { reason });
+        }}>Cancel</button>}
+        {(request.status === "Sent" || request.status === "Cancelled") && user.role === "OfficeAdmin" &&
+          <button onClick={() => { const reason = window.prompt("Reopening reason:");
+            if (reason) void post(`/service-requests/${request.id}/reopen`, { reason }); }}>Reopen</button>}
+      </div></div>
+    {error && <div className="error">{error}</div>}
+    <section className="details-card request-header-grid">
+      <Detail label="Request date" value={formatDate(request.requestDate)} />
+      <Detail label="Subject" value={request.subject} />
+      <Detail label="Contact" value={`${request.contactName} · ${request.contactEmail}`} />
+      <Detail label="Preferred port" value={request.preferredPort ?? "—"} />
+      <Detail label="ETA / ETD" value={`${formatDate(request.expectedArrivalDate)} / ${formatDate(request.expectedDepartureDate)}`} />
+      <Detail label="Service company" value={request.serviceCompany ?? "—"} />
+      <Detail label="Invoicing details" value={request.invoicingDetails ?? "—"} />
+      <Detail label="General remarks" value={request.generalRemarks ?? "—"} />
+    </section>
+    <section className="dashboard-section"><div className="dashboard-section-heading"><h2>Request Items</h2>
+      {editable && <button onClick={() => void post(`/service-requests/${request.id}/items/refresh-equipment`)}>Refresh Equipment Snapshots</button>}</div>
+      {request.items.length === 0 ? <div className="empty-state">No request items.</div> :
+        <div className="table-scroll"><table className="equipment-table"><thead><tr>
+          <th>No.</th><th>Type</th><th>Equipment / area</th><th>Maker / model</th>
+          <th>Serial</th><th>Location</th><th>Due / priority</th><th>Required service</th><th>Actions</th>
+        </tr></thead><tbody>{request.items.map((x, index) => <tr key={x.id}>
+          <td>{x.sequenceNumber}</td><td>{x.itemType}</td><td><strong>{x.title}</strong>
+            {x.inspectionReportNumber && <small>{x.inspectionReportNumber} · Finding {x.inspectionFindingSequence}</small>}</td>
+          <td>{`${x.maker ?? ""} ${x.model ?? ""}`.trim() || "—"}</td><td>{x.serialNumber ?? "—"}</td>
+          <td>{x.location ?? "—"}</td><td>{x.priority ?? formatDate(x.currentDueDate)}</td>
+          <td>{x.serviceDescription}</td><td className="row-actions">
+            {editable && <><button disabled={index === 0} onClick={() => void reorderServiceItems(request, x.id, -1, api, open)}>↑</button>
+              <button disabled={index === request.items.length - 1} onClick={() => void reorderServiceItems(request, x.id, 1, api, open)}>↓</button>
+              <button className="danger" onClick={async () => { await api(`/service-request-items/${x.id}`, { method: "DELETE" }); await open(request.id); }}>Remove</button></>}
+          </td></tr>)}</tbody></table></div>}
+    </section>
+    <section className="dashboard-section"><div className="dashboard-section-heading"><h2>Attachments</h2>
+      {editable && <label className="button-like">Attach File<input type="file" className="hidden-file-input"
+        accept=".pdf,.jpg,.jpeg,.png,.docx,.xlsx" onChange={async e => {
+          const file = e.target.files?.[0]; if (!file) return;
+          const data = new FormData(); data.append("file", file);
+          await api(`/service-requests/${request.id}/attachments`, { method: "POST", body: data });
+          await open(request.id);
+        }} /></label>}</div>
+      {request.attachments.length === 0 ? <div className="empty-state">No attachments.</div> :
+        <div className="document-list">{request.attachments.map(x => <div className="document-row" key={x.id}>
+          <div><strong>{x.originalFileName}</strong><small>{x.createdBy} · {formatDateTime(x.createdUtc)}</small></div>
+          <div><button onClick={() => void download(`/service-request-attachments/${x.id}/download`, x.originalFileName)}>Open</button>
+            {editable && <button className="danger" onClick={async () => { await api(`/service-request-attachments/${x.id}`, { method: "DELETE" }); await open(request.id); }}>Remove</button>}</div>
+        </div>)}</div>}
+    </section>
+    <section className="dashboard-section"><h2>PDF Versions</h2>
+      {pdfs.length === 0 ? <div className="empty-state">No PDF generated.</div> :
+        <div className="document-list">{pdfs.map(x => <div className="document-row" key={x.id}>
+          <div><strong>{x.fileName}</strong><small>Version {x.versionNumber} · {formatDateTime(x.generatedUtc)}</small></div>
+          <div>{x.isCurrent ? <span className="document-badge current">Current</span> :
+            <span className="document-badge archived">Archive</span>}
+            <button onClick={() => void download(`/service-request-pdfs/${x.id}/download`, x.fileName)}>Open</button></div>
+        </div>)}</div>}
+    </section>
+    {selection && <ManagedItemSelection request={request} type={selection} token={user.token}
+      onClose={() => setSelection(null)}
+      onAdded={() => { setSelection(null); void open(request.id); }} />}
+  </main>;
+}
+
+async function reorderServiceItems(request: ManagedServiceRequest, id: string, offset: number,
+  api: (path: string, init?: RequestInit) => Promise<Response>,
+  refresh: (id: string) => Promise<void>) {
+  const ids = request.items.map(x => x.id); const index = ids.indexOf(id);
+  [ids[index], ids[index + offset]] = [ids[index + offset], ids[index]];
+  await api(`/service-requests/${request.id}/items/reorder`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ itemIds: ids }),
+  }); await refresh(request.id);
+}
+
+function ManagedRequestCreate({ user, vessels, onClose, onCreated }: {
+  user: LoginResult; vessels: Vessel[]; onClose: () => void; onCreated: (id: string) => void;
+}) {
+  const [draft, setDraft] = useState({
+    vesselId: vessels[0]?.id ?? "", requestDate: new Date().toISOString().slice(0, 10),
+    contactName: user.fullName, contactEmail: user.email, contactPhone: "",
+    preferredPort: "", expectedArrivalDate: "", expectedDepartureDate: "",
+    serviceCompany: "", attentionTo: "", subject: "", generalRemarks: "",
+  });
+  const [error, setError] = useState("");
+  return <div className="modal-backdrop"><form className="modal inspection-dialog" onSubmit={async e => {
+    e.preventDefault(); setError("");
+    const response = await authFetch(`${apiBaseUrl}/service-requests`, user.token, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...draft,
+        expectedArrivalDate: draft.expectedArrivalDate || null,
+        expectedDepartureDate: draft.expectedDepartureDate || null,
+        preferredPort: draft.preferredPort || null }),
+    });
+    if (!response.ok) { const body = await response.json().catch(() => null);
+      setError(body?.detail ?? "Unable to create request."); return; }
+    onCreated((await response.json()).id);
+  }}><div className="modal-heading"><h2>Create Service Request</h2><button type="button" onClick={onClose}>×</button></div>
+    {error && <div className="error">{error}</div>}<div className="form-grid">
+      <label>Vessel<select value={draft.vesselId} onChange={e => setDraft({...draft,vesselId:e.target.value})}>
+        {vessels.map(x => <option key={x.id} value={x.id}>{x.vesselName}</option>)}</select></label>
+      <label>Request date<input type="date" required value={draft.requestDate} onChange={e => setDraft({...draft,requestDate:e.target.value})} /></label>
+      <label>Contact name<input required value={draft.contactName} onChange={e => setDraft({...draft,contactName:e.target.value})} /></label>
+      <label>Contact email<input type="email" required value={draft.contactEmail} onChange={e => setDraft({...draft,contactEmail:e.target.value})} /></label>
+      <label>Preferred port (optional)<input value={draft.preferredPort} onChange={e => setDraft({...draft,preferredPort:e.target.value})} /></label>
+      <label>ETA<input type="date" value={draft.expectedArrivalDate} onChange={e => setDraft({...draft,expectedArrivalDate:e.target.value})} /></label>
+      <label>ETD<input type="date" value={draft.expectedDepartureDate} onChange={e => setDraft({...draft,expectedDepartureDate:e.target.value})} /></label>
+      <label>Service company<input value={draft.serviceCompany} onChange={e => setDraft({...draft,serviceCompany:e.target.value})} /></label>
+    </div><label>Subject<input required value={draft.subject} onChange={e => setDraft({...draft,subject:e.target.value})} /></label>
+    <label>General remarks<textarea value={draft.generalRemarks} onChange={e => setDraft({...draft,generalRemarks:e.target.value})} /></label>
+    <div className="modal-actions"><button type="button" onClick={onClose}>Cancel</button><button className="primary">Create Draft</button></div>
+  </form></div>;
+}
+
+function ManagedItemSelection({ request, type, token, onClose, onAdded }: {
+  request: ManagedServiceRequest; type: "Equipment" | "InspectionFinding"; token: string;
+  onClose: () => void; onAdded: () => void;
+}) {
+  const [options, setOptions] = useState<Array<Record<string, unknown>>>([]);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [search, setSearch] = useState("");
+  const [serviceDescription, setServiceDescription] = useState("");
+  const [error, setError] = useState("");
+  useEffect(() => {
+    authFetch(`${apiBaseUrl}/service-requests/${request.id}/${type === "Equipment" ? "available-equipment" : "available-findings"}`, token)
+      .then(x => x.json()).then(setOptions).catch(() => setError("Unable to load selections."));
+  }, []);
+  const visible = options.filter(x => JSON.stringify(x).toLowerCase().includes(search.toLowerCase()));
+  return <div className="modal-backdrop"><div className="modal selection-dialog">
+    <div className="modal-heading"><h2>Select {type === "Equipment" ? "Equipment" : "Inspection Findings"}</h2><button onClick={onClose}>×</button></div>
+    {error && <div className="error">{error}</div>}<label>Search<input value={search} onChange={e => setSearch(e.target.value)} /></label>
+    <div className="selection-list">{visible.map(x => {
+      const id = String(x.id); const title = String(x.equipmentName ?? x.equipmentOrArea);
+      return <label key={id}><input type="checkbox" checked={selected.has(id)}
+        onChange={e => setSelected(current => { const next = new Set(current);
+          e.target.checked ? next.add(id) : next.delete(id); return next; })} />
+        <span><strong>{title}</strong><small>{String(x.category ?? x.reportNumber ?? "")} · {String(x.status ?? "")} · {String(x.expiryDate ?? x.exactLocation ?? "")}</small></span>
+      </label>;})}</div>
+    <label>Required service<input value={serviceDescription}
+      onChange={e => setServiceDescription(e.target.value)}
+      placeholder="Describe the required service" /></label>
+    <div className="modal-actions"><button onClick={onClose}>Cancel</button><button className="primary"
+      disabled={selected.size === 0 || !serviceDescription.trim()} onClick={async () => {
+        const response = await authFetch(`${apiBaseUrl}/service-requests/${request.id}/items`, token, {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ itemType: type, sourceIds: [...selected],
+            serviceDescription: serviceDescription.trim(), allowDuplicate: false }),
+        });
+        if (!response.ok) { const body = await response.json().catch(() => null);
+          setError(body?.detail ?? "Unable to add selections."); return; }
+        onAdded();
+      }}>Add Selected</button></div>
+  </div></div>;
 }
 
 function InspectionReportsPage({

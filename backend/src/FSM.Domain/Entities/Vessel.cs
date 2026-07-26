@@ -18,4 +18,6 @@ public sealed class Vessel
 
     public ICollection<InspectionReport> InspectionReports { get; set; } =
         new List<InspectionReport>();
+    public ICollection<ServiceRequest> ServiceRequests { get; set; } =
+        new List<ServiceRequest>();
 }

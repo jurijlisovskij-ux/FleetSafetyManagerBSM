@@ -12,6 +12,10 @@ using Microsoft.IdentityModel.Tokens;
 Directory.SetCurrentDirectory(AppContext.BaseDirectory);
 
 var builder = WebApplication.CreateBuilder(args);
+var externalConfig = Environment.GetEnvironmentVariable("FSM_CONFIG_PATH");
+if (!string.IsNullOrWhiteSpace(externalConfig))
+    builder.Configuration.AddJsonFile(
+        externalConfig, optional: false, reloadOnChange: true);
 
 if (WindowsServiceHelpers.IsWindowsService())
 {
@@ -39,6 +43,13 @@ builder.Services.AddSingleton<JwtTokenService>();
 builder.Services.AddSingleton<DocumentStorageService>();
 builder.Services.AddScoped<EquipmentDocumentAccessService>();
 builder.Services.AddSingleton<ServiceRequestExcelService>();
+builder.Services.AddSingleton<ServiceRequestStorageService>();
+builder.Services.AddSingleton<ServiceRequestPdfService>();
+builder.Services.AddSingleton<ActiveRequestTracker>();
+builder.Services.AddScoped<SystemAuditService>();
+builder.Services.AddSingleton<SystemBackupService>();
+builder.Services.AddSingleton<DatabaseLifecycleStatus>();
+builder.Services.AddScoped<DatabaseLifecycleService>();
 builder.Services.AddSingleton<InspectionListService>();
 builder.Services.AddSingleton<InspectionStorageService>();
 builder.Services.AddSingleton<InspectionPdfService>();
@@ -128,6 +139,7 @@ if (allowedOrigins.Length > 0)
         .AllowAnyMethod());
 }
 app.UseAuthentication();
+app.UseMiddleware<ActiveRequestTrackingMiddleware>();
 app.UseAuthorization();
 
 if (swaggerEnabled)
@@ -139,11 +151,14 @@ if (swaggerEnabled)
 app.MapControllers();
 app.MapFallbackToFile("index.html");
 
+await app.Services.GetRequiredService<SystemBackupService>()
+    .ApplyPendingRestoreAsync(CancellationToken.None);
+
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<FsmDbContext>();
-    await db.Database.EnsureCreatedAsync();
-    await db.Database.MigrateAsync();
+    await scope.ServiceProvider.GetRequiredService<DatabaseLifecycleService>()
+        .InitializeAsync(CancellationToken.None);
     await SeedData.InitializeAsync(db, app.Configuration);
 }
 

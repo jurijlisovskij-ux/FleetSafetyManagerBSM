@@ -16,6 +16,13 @@ public sealed class FsmDbContext(DbContextOptions<FsmDbContext> options)
     public DbSet<InspectionFinding> InspectionFindings => Set<InspectionFinding>();
     public DbSet<InspectionPhoto> InspectionPhotos => Set<InspectionPhoto>();
     public DbSet<InspectionReportPdf> InspectionReportPdfs => Set<InspectionReportPdf>();
+    public DbSet<ServiceRequest> ServiceRequests => Set<ServiceRequest>();
+    public DbSet<ServiceRequestItem> ServiceRequestItems => Set<ServiceRequestItem>();
+    public DbSet<ServiceRequestAttachment> ServiceRequestAttachments => Set<ServiceRequestAttachment>();
+    public DbSet<ServiceRequestPdf> ServiceRequestPdfs => Set<ServiceRequestPdf>();
+    public DbSet<SystemSetting> SystemSettings => Set<SystemSetting>();
+    public DbSet<SystemAuditEntry> SystemAuditEntries => Set<SystemAuditEntry>();
+    public DbSet<SystemBackup> SystemBackups => Set<SystemBackup>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -151,6 +158,91 @@ public sealed class FsmDbContext(DbContextOptions<FsmDbContext> options)
                 .HasDatabaseName("IX_inspection_report_pdfs_Report_Current");
             entity.HasOne(x => x.InspectionReport).WithMany(x => x.PdfVersions)
                 .HasForeignKey(x => x.InspectionReportId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<ServiceRequest>(entity =>
+        {
+            entity.ToTable("service_requests"); entity.HasKey(x => x.Id);
+            entity.Property(x => x.RequestNumber).HasMaxLength(80).IsRequired();
+            entity.Property(x => x.RequestedBy).HasMaxLength(120).IsRequired();
+            entity.Property(x => x.ContactName).HasMaxLength(120).IsRequired();
+            entity.Property(x => x.ContactEmail).HasMaxLength(255).IsRequired();
+            entity.Property(x => x.Subject).HasMaxLength(300).IsRequired();
+            entity.Property(x => x.Status).HasConversion<string>();
+            entity.HasIndex(x => x.RequestNumber).IsUnique();
+            entity.HasIndex(x => new { x.VesselId, x.RequestDate });
+            entity.HasOne(x => x.Vessel).WithMany(x => x.ServiceRequests)
+                .HasForeignKey(x => x.VesselId).OnDelete(DeleteBehavior.Restrict);
+        });
+        modelBuilder.Entity<ServiceRequestItem>(entity =>
+        {
+            entity.ToTable("service_request_items"); entity.HasKey(x => x.Id);
+            entity.Property(x => x.ItemType).HasConversion<string>();
+            entity.Property(x => x.Title).HasMaxLength(300).IsRequired();
+            entity.Property(x => x.ServiceDescription).IsRequired();
+            entity.HasIndex(x => new { x.ServiceRequestId, x.SequenceNumber }).IsUnique();
+            entity.HasIndex(x => new { x.ServiceRequestId, x.EquipmentId })
+                .IsUnique()
+                .HasFilter("\"EquipmentId\" IS NOT NULL");
+            entity.HasIndex(x => new { x.ServiceRequestId, x.InspectionFindingId })
+                .IsUnique()
+                .HasFilter("\"InspectionFindingId\" IS NOT NULL");
+            entity.HasOne(x => x.ServiceRequest).WithMany(x => x.Items)
+                .HasForeignKey(x => x.ServiceRequestId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.Equipment).WithMany().HasForeignKey(x => x.EquipmentId)
+                .OnDelete(DeleteBehavior.SetNull);
+            entity.HasOne(x => x.InspectionFinding).WithMany()
+                .HasForeignKey(x => x.InspectionFindingId).OnDelete(DeleteBehavior.SetNull);
+        });
+        modelBuilder.Entity<ServiceRequestAttachment>(entity =>
+        {
+            entity.ToTable("service_request_attachments"); entity.HasKey(x => x.Id);
+            entity.Property(x => x.OriginalFileName).HasMaxLength(260).IsRequired();
+            entity.Property(x => x.StoredFileName).HasMaxLength(520).IsRequired();
+            entity.Property(x => x.MimeType).HasMaxLength(120).IsRequired();
+            entity.HasOne(x => x.ServiceRequest).WithMany(x => x.Attachments)
+                .HasForeignKey(x => x.ServiceRequestId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<ServiceRequestPdf>(entity =>
+        {
+            entity.ToTable("service_request_pdfs"); entity.HasKey(x => x.Id);
+            entity.Property(x => x.FileName).HasMaxLength(260).IsRequired();
+            entity.Property(x => x.StoredFileName).HasMaxLength(520).IsRequired();
+            entity.Property(x => x.MimeType).HasMaxLength(120).IsRequired();
+            entity.HasIndex(x => new { x.ServiceRequestId, x.VersionNumber }).IsUnique();
+            entity.HasIndex(x => x.ServiceRequestId).IsUnique()
+                .HasFilter("\"IsCurrent\" = 1")
+                .HasDatabaseName("IX_service_request_pdfs_Request_Current");
+            entity.HasOne(x => x.ServiceRequest).WithMany(x => x.PdfVersions)
+                .HasForeignKey(x => x.ServiceRequestId).OnDelete(DeleteBehavior.Cascade);
+        });
+        modelBuilder.Entity<SystemSetting>(entity =>
+        {
+            entity.ToTable("system_settings");
+            entity.HasKey(x => x.Key);
+            entity.Property(x => x.Key).HasMaxLength(120);
+            entity.Property(x => x.Value).HasMaxLength(4000);
+            entity.HasIndex(x => x.UpdatedUtc);
+        });
+        modelBuilder.Entity<SystemAuditEntry>(entity =>
+        {
+            entity.ToTable("system_audit_entries");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.UserName).HasMaxLength(180).IsRequired();
+            entity.Property(x => x.Action).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.ObjectType).HasMaxLength(100).IsRequired();
+            entity.Property(x => x.ObjectId).HasMaxLength(180);
+            entity.HasIndex(x => x.CreatedUtc);
+            entity.HasIndex(x => new { x.Action, x.CreatedUtc });
+            entity.HasIndex(x => new { x.UserId, x.CreatedUtc });
+        });
+        modelBuilder.Entity<SystemBackup>(entity =>
+        {
+            entity.ToTable("system_backups");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.BackupType).HasMaxLength(40).IsRequired();
+            entity.Property(x => x.FileName).HasMaxLength(260).IsRequired();
+            entity.Property(x => x.CreatedByName).HasMaxLength(180).IsRequired();
+            entity.HasIndex(x => x.CreatedUtc);
         });
     }
 }

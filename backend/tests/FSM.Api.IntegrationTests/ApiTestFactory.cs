@@ -37,6 +37,7 @@ public sealed class ApiTestFactory : WebApplicationFactory<Program>
 
     public string DatabasePath => Path.Combine(testRoot, "fsm-tests.db");
     public string StoragePath => Path.Combine(testRoot, "documents");
+    public string BackupPath => Path.Combine(testRoot, "backups");
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -52,6 +53,7 @@ public sealed class ApiTestFactory : WebApplicationFactory<Program>
                 ["ConnectionStrings:DefaultConnection"] =
                     $"Data Source={DatabasePath}",
                 ["Storage:RootPath"] = StoragePath,
+                ["Administration:BackupPath"] = BackupPath,
                 ["Jwt:Key"] =
                     "integration-test-signing-key-32-characters-minimum",
                 ["DevelopmentSeed:Enabled"] = "false",
@@ -65,6 +67,13 @@ public sealed class ApiTestFactory : WebApplicationFactory<Program>
         using var scope = Services.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<FsmDbContext>();
 
+        await db.SystemAuditEntries.ExecuteDeleteAsync();
+        await db.SystemBackups.ExecuteDeleteAsync();
+        await db.SystemSettings.ExecuteDeleteAsync();
+        await db.ServiceRequestPdfs.ExecuteDeleteAsync();
+        await db.ServiceRequestAttachments.ExecuteDeleteAsync();
+        await db.ServiceRequestItems.ExecuteDeleteAsync();
+        await db.ServiceRequests.ExecuteDeleteAsync();
         await db.InspectionReportPdfs.ExecuteDeleteAsync();
         await db.InspectionPhotos.ExecuteDeleteAsync();
         await db.InspectionFindings.ExecuteDeleteAsync();

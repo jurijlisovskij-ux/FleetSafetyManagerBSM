@@ -108,6 +108,12 @@ public sealed class MigrationTests
                 CurrentCertificatePath TEXT NULL,
                 CurrentCertificateFileName TEXT NULL
             );
+            CREATE TABLE "__EFMigrationsHistory" (
+                "MigrationId" TEXT NOT NULL PRIMARY KEY,
+                "ProductVersion" TEXT NOT NULL
+            );
+            INSERT INTO "__EFMigrationsHistory" VALUES
+                ('202607240000_InitialCoreSchema', '9.0.0');
 
             INSERT INTO equipment (
                 Id, VesselId, Category, EquipmentName, Maker, Model,

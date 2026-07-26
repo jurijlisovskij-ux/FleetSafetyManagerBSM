@@ -1,0 +1,10 @@
+<Project>
+  <PropertyGroup>
+    <Version>1.0.0-rc1</Version>
+    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <FileVersion>1.0.0.0</FileVersion>
+    <InformationalVersion>1.0.0-rc1</InformationalVersion>
+    <Product>Fleet Safety Manager</Product>
+    <Company>Fleet Safety Manager</Company>
+  </PropertyGroup>
+</Project>

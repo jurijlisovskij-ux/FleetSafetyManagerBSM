@@ -16,7 +16,8 @@ namespace FSM.Api.Controllers;
 [Route("api/inspection-reports")]
 public sealed partial class InspectionReportsController(
     FsmDbContext db, EquipmentDocumentAccessService access,
-    InspectionStorageService storage, InspectionPdfService pdfService) : ControllerBase
+    InspectionStorageService storage, InspectionPdfService pdfService,
+    SystemAuditService audit) : ControllerBase
 {
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<InspectionReportListDto>>> List(
@@ -177,6 +178,8 @@ public sealed partial class InspectionReportsController(
         report!.State = InspectionReportState.Finalized;
         report.UpdatedUtc = DateTime.UtcNow;
         await db.SaveChangesAsync(ct);
+        await audit.WriteAsync(User, "InspectionFinalized", "InspectionReport",
+            report.Id.ToString(), report.ReportNumber, ct);
         return NoContent();
     }
 
@@ -196,6 +199,8 @@ public sealed partial class InspectionReportsController(
         report.ReopenedBy = User.FindFirstValue(ClaimTypes.Name) ?? "Administrator";
         report.ReopeningReason = request.Reason.Trim();
         await db.SaveChangesAsync(ct);
+        await audit.WriteAsync(User, "InspectionReopened", "InspectionReport",
+            report.Id.ToString(), request.Reason.Trim(), ct);
         return NoContent();
     }
 

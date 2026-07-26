@@ -354,6 +354,404 @@ namespace FSM.Infrastructure.Persistence.Migrations
                     b.ToTable("inspection_report_pdfs", (string)null);
                 });
 
+            modelBuilder.Entity("FSM.Domain.Entities.ServiceRequest", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("AttentionTo")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CancellationReason")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("CancelledUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("CompletedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ContactEmail")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ContactName")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ContactPhone")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("CreatedByUserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateOnly?>("ExpectedArrivalDate")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateOnly?>("ExpectedDepartureDate")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("GeneralRemarks")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("InvoicingDetails")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("PreferredPort")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReopenReason")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ReopenedBy")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("ReopenedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateOnly>("RequestDate")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RequestNumber")
+                        .IsRequired()
+                        .HasMaxLength(80)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("RequestedBy")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("SentUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ServiceCompany")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Subject")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("VesselId")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RequestNumber")
+                        .IsUnique();
+
+                    b.HasIndex("VesselId", "RequestDate");
+
+                    b.ToTable("service_requests", (string)null);
+                });
+
+            modelBuilder.Entity("FSM.Domain.Entities.ServiceRequestAttachment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CreatedBy")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("FileSize")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("MimeType")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("OriginalFileName")
+                        .IsRequired()
+                        .HasMaxLength(260)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("ServiceRequestId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StoredFileName")
+                        .IsRequired()
+                        .HasMaxLength(520)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ServiceRequestId");
+
+                    b.ToTable("service_request_attachments", (string)null);
+                });
+
+            modelBuilder.Entity("FSM.Domain.Entities.ServiceRequestItem", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Category")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateOnly?>("CurrentDueDate")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Description")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("EquipmentId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("InspectionFindingId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int?>("InspectionFindingSequence")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("InspectionReportNumber")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ItemType")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Location")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Maker")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Model")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Priority")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Remarks")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SequenceNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("SerialNumber")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ServiceDescription")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("ServiceRequestId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Title")
+                        .IsRequired()
+                        .HasMaxLength(300)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EquipmentId");
+
+                    b.HasIndex("InspectionFindingId");
+
+                    b.HasIndex("ServiceRequestId", "EquipmentId")
+                        .IsUnique()
+                        .HasFilter("\"EquipmentId\" IS NOT NULL");
+
+                    b.HasIndex("ServiceRequestId", "InspectionFindingId")
+                        .IsUnique()
+                        .HasFilter("\"InspectionFindingId\" IS NOT NULL");
+
+                    b.HasIndex("ServiceRequestId", "SequenceNumber")
+                        .IsUnique();
+
+                    b.ToTable("service_request_items", (string)null);
+                });
+
+            modelBuilder.Entity("FSM.Domain.Entities.ServiceRequestPdf", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(260)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("FileSize")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("GeneratedBy")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("GeneratedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsCurrent")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("MimeType")
+                        .IsRequired()
+                        .HasMaxLength(120)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("ServiceRequestId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("StoredFileName")
+                        .IsRequired()
+                        .HasMaxLength(520)
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("VersionNumber")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("ServiceRequestId")
+                        .IsUnique()
+                        .HasDatabaseName("IX_service_request_pdfs_Request_Current")
+                        .HasFilter("\"IsCurrent\" = 1");
+
+                    b.HasIndex("ServiceRequestId", "VersionNumber")
+                        .IsUnique();
+
+                    b.ToTable("service_request_pdfs", (string)null);
+                });
+
+            modelBuilder.Entity("FSM.Domain.Entities.SystemAuditEntry", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Details")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ObjectId")
+                        .HasMaxLength(180)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("ObjectType")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("UserName")
+                        .IsRequired()
+                        .HasMaxLength(180)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedUtc");
+
+                    b.HasIndex("Action", "CreatedUtc");
+
+                    b.HasIndex("UserId", "CreatedUtc");
+
+                    b.ToTable("system_audit_entries", (string)null);
+                });
+
+            modelBuilder.Entity("FSM.Domain.Entities.SystemBackup", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("BackupType")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("CreatedByName")
+                        .IsRequired()
+                        .HasMaxLength(180)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid>("CreatedByUserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("CreatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("FileName")
+                        .IsRequired()
+                        .HasMaxLength(260)
+                        .HasColumnType("TEXT");
+
+                    b.Property<long>("FileSize")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedUtc");
+
+                    b.ToTable("system_backups", (string)null);
+                });
+
+            modelBuilder.Entity("FSM.Domain.Entities.SystemSetting", b =>
+                {
+                    b.Property<string>("Key")
+                        .HasMaxLength(120)
+                        .HasColumnType("TEXT");
+
+                    b.Property<Guid?>("UpdatedByUserId")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime>("UpdatedUtc")
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Value")
+                        .IsRequired()
+                        .HasMaxLength(4000)
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Key");
+
+                    b.HasIndex("UpdatedUtc");
+
+                    b.ToTable("system_settings", (string)null);
+                });
+
             modelBuilder.Entity("FSM.Domain.Entities.User", b =>
                 {
                     b.Property<Guid>("Id")
@@ -507,6 +905,64 @@ namespace FSM.Infrastructure.Persistence.Migrations
                     b.Navigation("InspectionReport");
                 });
 
+            modelBuilder.Entity("FSM.Domain.Entities.ServiceRequest", b =>
+                {
+                    b.HasOne("FSM.Domain.Entities.Vessel", "Vessel")
+                        .WithMany("ServiceRequests")
+                        .HasForeignKey("VesselId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Vessel");
+                });
+
+            modelBuilder.Entity("FSM.Domain.Entities.ServiceRequestAttachment", b =>
+                {
+                    b.HasOne("FSM.Domain.Entities.ServiceRequest", "ServiceRequest")
+                        .WithMany("Attachments")
+                        .HasForeignKey("ServiceRequestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ServiceRequest");
+                });
+
+            modelBuilder.Entity("FSM.Domain.Entities.ServiceRequestItem", b =>
+                {
+                    b.HasOne("FSM.Domain.Entities.Equipment", "Equipment")
+                        .WithMany()
+                        .HasForeignKey("EquipmentId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("FSM.Domain.Entities.InspectionFinding", "InspectionFinding")
+                        .WithMany()
+                        .HasForeignKey("InspectionFindingId")
+                        .OnDelete(DeleteBehavior.SetNull);
+
+                    b.HasOne("FSM.Domain.Entities.ServiceRequest", "ServiceRequest")
+                        .WithMany("Items")
+                        .HasForeignKey("ServiceRequestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Equipment");
+
+                    b.Navigation("InspectionFinding");
+
+                    b.Navigation("ServiceRequest");
+                });
+
+            modelBuilder.Entity("FSM.Domain.Entities.ServiceRequestPdf", b =>
+                {
+                    b.HasOne("FSM.Domain.Entities.ServiceRequest", "ServiceRequest")
+                        .WithMany("PdfVersions")
+                        .HasForeignKey("ServiceRequestId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("ServiceRequest");
+                });
+
             modelBuilder.Entity("FSM.Domain.Entities.UserVessel", b =>
                 {
                     b.HasOne("FSM.Domain.Entities.User", "User")
@@ -543,6 +999,15 @@ namespace FSM.Infrastructure.Persistence.Migrations
                     b.Navigation("PdfVersions");
                 });
 
+            modelBuilder.Entity("FSM.Domain.Entities.ServiceRequest", b =>
+                {
+                    b.Navigation("Attachments");
+
+                    b.Navigation("Items");
+
+                    b.Navigation("PdfVersions");
+                });
+
             modelBuilder.Entity("FSM.Domain.Entities.User", b =>
                 {
                     b.Navigation("VesselAssignments");
@@ -553,6 +1018,8 @@ namespace FSM.Infrastructure.Persistence.Migrations
                     b.Navigation("Equipment");
 
                     b.Navigation("InspectionReports");
+
+                    b.Navigation("ServiceRequests");
 
                     b.Navigation("UserAssignments");
                 });
