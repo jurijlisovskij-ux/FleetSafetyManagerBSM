@@ -1,0 +1,41 @@
+﻿{
+    "productName":  "Fleet Safety Manager",
+    "releaseVersion":  "1.0.0-rc1",
+    "buildDateUtc":  "2026-07-26T08:53:35.2228605Z",
+    "commitHash":  "f97019cc64844063be921efb5091ebee450e0718",
+    "supportedOperatingSystems":  [
+                                      "Windows 10 x64",
+                                      "Windows 11 x64",
+                                      "Windows Server 2019+"
+                                  ],
+    "databaseSchemaVersion":  "20260726080125_AddSystemAdministration",
+    "minimumSupportedSchema":  "202607240000_InitialCoreSchema",
+    "installers":  [
+                       {
+                           "fileName":  "FleetSafetyManager-Office-1.0.0-rc1.exe",
+                           "size":  48098013,
+                           "sha256":  "69F41B9885C1A514A8D20EF315ABED43AC4384001650A34D9884D58DEE35038A"
+                       },
+                       {
+                           "fileName":  "FleetSafetyManager-Ship-1.0.0-rc1.exe",
+                           "size":  48098015,
+                           "sha256":  "14E1A2BAE987EA77FD1D64ACCCC9C61691E64F9E3806F70231610A6055B2C4DE"
+                       }
+                   ],
+    "includedMigrations":  [
+                               "202607240000_InitialCoreSchema",
+                               "202607250001_AddEquipmentDocumentRepository",
+                               "20260725195239_AddInspectionReports",
+                               "20260725202932_AddManagedServiceRequests",
+                               "20260726080125_AddSystemAdministration"
+                           ],
+    "dataLocations":  {
+                          "office":  "%ProgramData%\\Fleet Safety Manager\\Office",
+                          "ship":  "%ProgramData%\\Fleet Safety Manager\\Ship"
+                      },
+    "upgradeNotes":  "Retains configuration, database, documents, backups and logs. Migration runs at first service startup.",
+    "knownLimitations":  [
+                             "Pilot release; validate restore on an isolated machine before production use.",
+                             "Synchronization remains limited to the existing implementation."
+                         ]
+}
