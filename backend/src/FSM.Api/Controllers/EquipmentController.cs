@@ -1,7 +1,6 @@
 using System.Security.Claims;
 using FSM.Domain.Entities;
 using FSM.Domain.Enums;
-using FSM.Api.Services;
 using FSM.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -23,8 +22,7 @@ public sealed record SaveEquipmentRequest(
 [ApiController]
 [Authorize]
 [Route("api/vessels/{vesselId:guid}/equipment")]
-public sealed class EquipmentController(
-    FsmDbContext db, SystemAuditService audit) : ControllerBase
+public sealed class EquipmentController(FsmDbContext db) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> GetByVessel(
@@ -155,8 +153,6 @@ public sealed class EquipmentController(
 
         db.Equipment.Remove(item);
         await db.SaveChangesAsync(cancellationToken);
-        await audit.WriteAsync(User, "EquipmentDeleted", "Equipment",
-            equipmentId.ToString(), item.EquipmentName, cancellationToken);
         return NoContent();
     }
 

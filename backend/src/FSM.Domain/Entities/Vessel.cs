@@ -15,9 +15,4 @@ public sealed class Vessel
 
     public ICollection<Equipment> Equipment { get; set; } =
         new List<Equipment>();
-
-    public ICollection<InspectionReport> InspectionReports { get; set; } =
-        new List<InspectionReport>();
-    public ICollection<ServiceRequest> ServiceRequests { get; set; } =
-        new List<ServiceRequest>();
 }

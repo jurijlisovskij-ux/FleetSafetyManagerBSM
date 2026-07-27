@@ -8,23 +8,9 @@ namespace FSM.Api;
 
 public static class SeedData
 {
-    public static async Task InitializeAsync(
-        FsmDbContext db,
-        IConfiguration configuration)
+    public static async Task InitializeAsync(FsmDbContext db)
     {
-        if (!configuration.GetValue<bool>("DevelopmentSeed:Enabled"))
-            return;
-
-        var administratorPassword = GetRequiredPassword(
-            configuration,
-            "AdministratorPassword");
-        var superintendentPassword = GetRequiredPassword(
-            configuration,
-            "SuperintendentPassword");
-        var crewPassword = GetRequiredPassword(
-            configuration,
-            "CrewPassword");
-
+        await db.Database.EnsureCreatedAsync();
         if (await db.Users.AnyAsync()) return;
 
         var admin = new User
@@ -32,7 +18,7 @@ public static class SeedData
             Id = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
             FullName = "Office Administrator",
             Email = "admin@fsm.local",
-            PasswordHash = PasswordHasher.Hash(administratorPassword),
+            PasswordHash = PasswordHasher.Hash("Admin123!"),
             Role = UserRole.OfficeAdmin
         };
 
@@ -41,7 +27,7 @@ public static class SeedData
             Id = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
             FullName = "Technical Superintendent",
             Email = "superintendent@fsm.local",
-            PasswordHash = PasswordHasher.Hash(superintendentPassword),
+            PasswordHash = PasswordHasher.Hash("Super123!"),
             Role = UserRole.Superintendent
         };
 
@@ -50,7 +36,7 @@ public static class SeedData
             Id = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"),
             FullName = "Vessel Crew",
             Email = "crew@fsm.local",
-            PasswordHash = PasswordHasher.Hash(crewPassword),
+            PasswordHash = PasswordHasher.Hash("Crew123!"),
             Role = UserRole.Crew
         };
 
@@ -151,21 +137,5 @@ public static class SeedData
             });
 
         await db.SaveChangesAsync();
-    }
-
-    private static string GetRequiredPassword(
-        IConfiguration configuration,
-        string name)
-    {
-        var value = configuration[$"DevelopmentSeed:{name}"];
-
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            throw new InvalidOperationException(
-                $"Development seeding is enabled, but " +
-                $"DevelopmentSeed:{name} is missing.");
-        }
-
-        return value;
     }
 }

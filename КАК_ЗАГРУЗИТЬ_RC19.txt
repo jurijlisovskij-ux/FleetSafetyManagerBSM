@@ -1,0 +1,20 @@
+FLEET SAFETY MANAGER RC19 — ЗАГРУЗКА ЧЕРЕЗ GITHUB DESKTOP
+
+1. Распакуйте этот архив.
+2. Откройте GitHub Desktop.
+3. Выберите репозиторий FleetSafetyManagerBSM.
+4. В меню Repository нажмите Show in Explorer.
+5. Удалите из открывшейся папки всё, КРОМЕ скрытой папки .git.
+6. Скопируйте в неё всё содержимое распакованной папки FleetSafetyManager_RC19_GitHub_Ready.
+7. Вернитесь в GitHub Desktop.
+8. В поле Summary введите: RC19 complete build
+9. Нажмите Commit to main.
+10. Нажмите Push origin.
+
+После Push GitHub Actions запустится автоматически.
+Готовые файлы появятся: GitHub → Actions → Build FSM RC19 Windows Installers → Artifacts.
+Артефакт: FleetSafetyManager-RC19-Windows-Installers.
+
+Контроль версии:
+- интерфейс: Version RC19
+- установщик: 1.0.0-RC19

@@ -7,7 +7,7 @@
 #endif
 
 #define AppName "Fleet Safety Manager"
-#define AppVersion "1.0.0-rc1"
+#define AppVersion "1.0.0-RC19"
 #define ServiceName "FleetSafetyManager"
 
 [Setup]
@@ -28,18 +28,19 @@ UninstallDisplayName={#AppName} {#MyEdition}
 SetupLogging=yes
 
 [Files]
-Source: "..\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: "appsettings.json"
-Source: "..\deployment\appsettings.Production.template.json"; DestDir: "{commonappdata}\Fleet Safety Manager\{#MyEdition}"; DestName: "appsettings.json"; Flags: onlyifdoesntexist uninsneveruninstall
+Source: "..\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Dirs]
-Name: "{commonappdata}\Fleet Safety Manager\{#MyEdition}\Data"
-Name: "{commonappdata}\Fleet Safety Manager\{#MyEdition}\Documents"
-Name: "{commonappdata}\Fleet Safety Manager\{#MyEdition}\Backups"
-Name: "{commonappdata}\Fleet Safety Manager\{#MyEdition}\Logs"
+Name: "{app}\Data"
+Name: "{app}\Documents"
+Name: "{app}\Documents\reports"
+Name: "{app}\Documents\certificates"
+Name: "{app}\Backups"
+Name: "{app}\Logs"
 
 [Icons]
 Name: "{group}\Open Fleet Safety Manager"; Filename: "http://localhost:8080"
-Name: "{group}\Fleet Safety Manager Data"; Filename: "{commonappdata}\Fleet Safety Manager\{#MyEdition}"
+Name: "{group}\Fleet Safety Manager Data"; Filename: "{app}"
 Name: "{commondesktop}\Fleet Safety Manager"; Filename: "http://localhost:8080"
 
 [Run]
@@ -51,9 +52,6 @@ Filename: "{cmd}"; Parameters: "/C netsh advfirewall firewall delete rule name="
 Filename: "{cmd}"; Parameters: "/C netsh advfirewall firewall add rule name=""Fleet Safety Manager"" dir=in action=allow protocol=TCP localport=8080"; Flags: runhidden waituntilterminated
 Filename: "{cmd}"; Parameters: "/C sc start {#ServiceName}"; Flags: runhidden waituntilterminated
 Filename: "http://localhost:8080"; Description: "Open Fleet Safety Manager"; Flags: postinstall shellexec skipifsilent
-
-[Registry]
-Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Services\{#ServiceName}"; ValueType: multisz; ValueName: "Environment"; ValueData: "FSM_CONFIG_PATH={commonappdata}\Fleet Safety Manager\{#MyEdition}\appsettings.json"; Flags: uninsdeletevalue
 
 [UninstallRun]
 Filename: "{cmd}"; Parameters: "/C sc stop {#ServiceName}"; Flags: runhidden waituntilterminated
@@ -84,7 +82,7 @@ var
 begin
   if CurStep = ssPostInstall then
   begin
-    ConfigPath := ExpandConstant('{commonappdata}\Fleet Safety Manager\{#MyEdition}\appsettings.json');
+    ConfigPath := ExpandConstant('{app}\appsettings.json');
     if LoadStringFromFile(ConfigPath, ConfigText) then
     begin
       UpdatedConfigText := String(ConfigText);
@@ -94,7 +92,6 @@ begin
         '"Edition": "{#MyEdition}"',
         True
       );
-      StringChangeEx(UpdatedConfigText, '\Office\', '\{#MyEdition}\', True);
       SaveStringToFile(
         ConfigPath,
         AnsiString(UpdatedConfigText),

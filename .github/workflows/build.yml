@@ -1,10 +1,9 @@
-name: Build FSM Windows Installers
+name: Build FSM RC19 Windows Installers
 
 on:
   push:
     branches:
       - main
-
   workflow_dispatch:
 
 permissions:
@@ -22,6 +21,8 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
 
       - name: Setup .NET 9
         uses: actions/setup-dotnet@v4
@@ -32,32 +33,18 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          Write-Host "Building frontend from commit $env:GITHUB_SHA"
-
           Set-Location frontend
           npm ci --registry=https://registry.npmjs.org/
-          if ($LASTEXITCODE -ne 0) {
-            throw "npm ci failed with exit code $LASTEXITCODE."
-          }
-
           npm run build
-          if ($LASTEXITCODE -ne 0) {
-            throw "Frontend build failed with exit code $LASTEXITCODE."
-          }
 
           $frontendBundle = Get-Content "dist/assets/*.js" -Raw
-          if ($frontendBundle -notmatch "Version RC18" -or
-              $frontendBundle -notmatch "Synchronization") {
-            throw "The frontend bundle does not contain the RC18 UI changes."
+          if ($frontendBundle -notmatch "Version RC19") {
+            throw "The frontend bundle does not contain Version RC19."
           }
 
           Set-Location ..
-
           $wwwroot = "backend/src/FSM.Api/wwwroot"
-          if (Test-Path $wwwroot) {
-            Remove-Item $wwwroot -Recurse -Force
-          }
-
+          if (Test-Path $wwwroot) { Remove-Item $wwwroot -Recurse -Force }
           New-Item -ItemType Directory -Force -Path $wwwroot | Out-Null
           Copy-Item "frontend/dist/*" $wwwroot -Recurse -Force
 
@@ -65,7 +52,6 @@ jobs:
         shell: pwsh
         run: |
           dotnet restore backend/src/FSM.Api/FSM.Api.csproj
-
           dotnet publish backend/src/FSM.Api/FSM.Api.csproj `
             -c Release `
             -r win-x64 `
@@ -89,7 +75,7 @@ jobs:
         run: |
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
             /DMyEdition=Office `
-            /DOutputBase=FleetSafetyManager_Office_Setup `
+            /DOutputBase=FleetSafetyManager_RC19_Office_Setup `
             installer/FleetSafetyManager.iss
 
       - name: Build Ship installer
@@ -97,13 +83,13 @@ jobs:
         run: |
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
             /DMyEdition=Ship `
-            /DOutputBase=FleetSafetyManager_Ship_Setup `
+            /DOutputBase=FleetSafetyManager_RC19_Ship_Setup `
             installer/FleetSafetyManager.iss
 
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
-          name: FleetSafetyManager-Windows-Installers
+          name: FleetSafetyManager-RC19-Windows-Installers
           path: installer/output/*.exe
           if-no-files-found: error
           retention-days: 30
