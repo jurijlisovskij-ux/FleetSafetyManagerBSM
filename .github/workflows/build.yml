@@ -1,10 +1,14 @@
 name: Build FSM RC19 Windows Installers
 
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - "backend/**"
+      - "installer/**"
+      - ".github/workflows/build.yml"
 
 permissions:
   contents: read
@@ -34,23 +38,27 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           Set-Location frontend
-          npm ci --registry=https://registry.npmjs.org/
+          npm ci
           npm run build
+          Set-Location ..
 
-          $frontendBundle = Get-Content "dist/assets/*.js" -Raw
-          if ($frontendBundle -notmatch "Version RC19") {
-            throw "The frontend bundle does not contain Version RC19."
+          $bundle = Get-Content "frontend/dist/assets/*.js" -Raw
+          if ($bundle -notmatch "Version RC19") {
+            throw "Frontend bundle does not contain Version RC19."
+          }
+          if ($bundle -match "Version RC18") {
+            throw "Frontend bundle still contains Version RC18."
           }
 
-          Set-Location ..
           $wwwroot = "backend/src/FSM.Api/wwwroot"
           if (Test-Path $wwwroot) { Remove-Item $wwwroot -Recurse -Force }
           New-Item -ItemType Directory -Force -Path $wwwroot | Out-Null
           Copy-Item "frontend/dist/*" $wwwroot -Recurse -Force
 
-      - name: Publish Windows application
+      - name: Publish self-contained Windows application
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
           dotnet restore backend/src/FSM.Api/FSM.Api.csproj
           dotnet publish backend/src/FSM.Api/FSM.Api.csproj `
             -c Release `
@@ -60,11 +68,12 @@ jobs:
             -p:PublishReadyToRun=false `
             -o publish
 
-          New-Item -ItemType Directory -Force publish/Data | Out-Null
-          New-Item -ItemType Directory -Force publish/Documents/reports | Out-Null
-          New-Item -ItemType Directory -Force publish/Documents/certificates | Out-Null
-          New-Item -ItemType Directory -Force publish/Backups | Out-Null
-          New-Item -ItemType Directory -Force publish/Logs | Out-Null
+          @("Data", "Documents/reports", "Documents/certificates", "Backups", "Logs") |
+            ForEach-Object { New-Item -ItemType Directory -Force "publish/$_" | Out-Null }
+
+          if (-not (Test-Path "publish/FSM.Api.exe")) {
+            throw "FSM.Api.exe was not published."
+          }
 
       - name: Install Inno Setup
         shell: pwsh
@@ -85,6 +94,16 @@ jobs:
             /DMyEdition=Ship `
             /DOutputBase=FleetSafetyManager_RC19_Ship_Setup `
             installer/FleetSafetyManager.iss
+
+      - name: Verify installer files
+        shell: pwsh
+        run: |
+          $office = "installer/output/FleetSafetyManager_RC19_Office_Setup.exe"
+          $ship = "installer/output/FleetSafetyManager_RC19_Ship_Setup.exe"
+          if (-not (Test-Path $office)) { throw "Office installer is missing." }
+          if (-not (Test-Path $ship)) { throw "Ship installer is missing." }
+          Get-FileHash $office -Algorithm SHA256
+          Get-FileHash $ship -Algorithm SHA256
 
       - name: Upload installers
         uses: actions/upload-artifact@v4
