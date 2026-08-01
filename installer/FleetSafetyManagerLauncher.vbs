@@ -1,9 +1,9 @@
 Option Explicit
 
 Const SERVICE_NAME = "FleetSafetyManager"
-Const APP_URL = "http://127.0.0.1:8088/"
+Const APP_URL = "http://127.0.0.1:8080/"
 
-Dim shell, fso, logPath, i, http, serviceState
+Dim shell, fso, logPath, i, http
 Set shell = CreateObject("WScript.Shell")
 Set fso = CreateObject("Scripting.FileSystemObject")
 logPath = shell.ExpandEnvironmentStrings("%LOCALAPPDATA%") & "\FleetSafetyManagerLauncher.log"
