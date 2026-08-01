@@ -50,17 +50,19 @@ public sealed class DocumentStorageService(IConfiguration configuration)
 
         try
         {
-            await using var input = File.OpenRead(temporaryPath);
-            var signature = new byte[5];
-            var bytesRead = await input.ReadAsync(
-                signature,
-                cancellationToken);
-
-            if (bytesRead != 5 ||
-                Encoding.ASCII.GetString(signature) != "%PDF-")
+            await using (var input = File.OpenRead(temporaryPath))
             {
-                throw new InvalidDataException(
-                    "The selected file is not a valid PDF.");
+                var signature = new byte[5];
+                var bytesRead = await input.ReadAsync(
+                    signature,
+                    cancellationToken);
+
+                if (bytesRead != 5 ||
+                    Encoding.ASCII.GetString(signature) != "%PDF-")
+                {
+                    throw new InvalidDataException(
+                        "The selected file is not a valid PDF.");
+                }
             }
 
             File.Move(temporaryPath, finalPath, overwrite: true);

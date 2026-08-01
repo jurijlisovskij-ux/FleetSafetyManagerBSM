@@ -7,21 +7,57 @@ public static class SchemaUpgrade
 {
     public static async Task ApplyAsync(FsmDbContext db)
     {
-        const string sql =
-            "ALTER TABLE equipment " +
-            "ADD COLUMN IF NOT EXISTS \"CurrentReportPath\" text, " +
-            "ADD COLUMN IF NOT EXISTS \"CurrentReportFileName\" text, " +
-            "ADD COLUMN IF NOT EXISTS \"CurrentCertificatePath\" text, " +
-            "ADD COLUMN IF NOT EXISTS \"CurrentCertificateFileName\" text;";
+        await db.Database.OpenConnectionAsync();
 
-        await db.Database.ExecuteSqlRawAsync(sql);
+        try
+        {
+            await AddColumnIfMissingAsync(
+                db, "equipment", "CurrentReportPath", "TEXT");
+            await AddColumnIfMissingAsync(
+                db, "equipment", "CurrentReportFileName", "TEXT");
+            await AddColumnIfMissingAsync(
+                db, "equipment", "CurrentCertificatePath", "TEXT");
+            await AddColumnIfMissingAsync(
+                db, "equipment", "CurrentCertificateFileName", "TEXT");
+            await AddColumnIfMissingAsync(
+                db, "vessels", "CompanyName", "TEXT");
+            await AddColumnIfMissingAsync(
+                db, "vessels", "InvoicingDetails", "TEXT");
+            await AddColumnIfMissingAsync(
+                db, "vessels", "AccountingEmail", "TEXT");
+        }
+        finally
+        {
+            await db.Database.CloseConnectionAsync();
+        }
+    }
 
-        const string vesselSql =
-            "ALTER TABLE vessels " +
-            "ADD COLUMN IF NOT EXISTS \"CompanyName\" text, " +
-            "ADD COLUMN IF NOT EXISTS \"InvoicingDetails\" text, " +
-            "ADD COLUMN IF NOT EXISTS \"AccountingEmail\" text;";
+    private static async Task AddColumnIfMissingAsync(
+        FsmDbContext db,
+        string tableName,
+        string columnName,
+        string columnType)
+    {
+        var connection = db.Database.GetDbConnection();
 
-        await db.Database.ExecuteSqlRawAsync(vesselSql);
+        await using var command = connection.CreateCommand();
+        command.CommandText = $"PRAGMA table_info(\"{tableName}\");";
+
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            if (string.Equals(
+                reader.GetString(1),
+                columnName,
+                StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        await reader.DisposeAsync();
+        await db.Database.ExecuteSqlRawAsync(
+            $"ALTER TABLE \"{tableName}\" " +
+            $"ADD COLUMN \"{columnName}\" {columnType};");
     }
 }

@@ -45,10 +45,5 @@ ensureReplace(
   "Ship dashboard button visibility",
 );
 
-source = source
-  .replace(/"Generate Excel"/g, '"Generate PDF"')
-  .replace(/"Generating\.\.\."\s*:\s*includeCertificates\s*\|\|\s*includeReports\s*\?\s*"Generate ZIP"\s*:\s*"Generate Excel"/g,
-    '"Generating..." : includeCertificates || includeReports ? "Generate ZIP" : "Generate PDF"');
-
 fs.writeFileSync(file, source, "utf8");
-console.log("RC19 Ship UI and Service Request PDF labels are present.");
+console.log("RC19 Ship UI fixes are present.");
