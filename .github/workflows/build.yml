@@ -8,6 +8,7 @@ on:
       - "frontend/**"
       - "backend/**"
       - "installer/**"
+      - "scripts/**"
       - ".github/workflows/build.yml"
 
 permissions:
@@ -37,6 +38,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
+          node scripts/apply-rc19-ui-fixes.mjs
           Set-Location frontend
           npm ci
           npm run build
@@ -48,6 +50,9 @@ jobs:
           }
           if ($bundle -match "Version RC18") {
             throw "Frontend bundle still contains Version RC18."
+          }
+          if ($bundle -notmatch "ship-edition") {
+            throw "Frontend bundle does not contain Ship edition UI handling."
           }
 
           $wwwroot = "backend/src/FSM.Api/wwwroot"
