@@ -1,3 +1,4 @@
+using System.Security.Claims;
 using System.Text;
 using FSM.Api;
 using FSM.Api.Auth;
@@ -43,6 +44,7 @@ builder.Services.AddHostedService<DailyNotificationWorker>();
 
 var jwtKey = builder.Configuration["Jwt:Key"]
     ?? throw new InvalidOperationException("JWT key is missing.");
+var applicationEdition = builder.Configuration["Application:Edition"] ?? "Office";
 
 builder.Services
     .AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
@@ -59,6 +61,27 @@ builder.Services
             IssuerSigningKey =
                 new SymmetricSecurityKey(Encoding.UTF8.GetBytes(jwtKey)),
             ClockSkew = TimeSpan.FromMinutes(1)
+        };
+
+        options.Events = new JwtBearerEvents
+        {
+            OnTokenValidated = context =>
+            {
+                var role = context.Principal?.FindFirstValue(ClaimTypes.Role);
+                var isShipEdition = applicationEdition.Equals(
+                    "Ship",
+                    StringComparison.OrdinalIgnoreCase);
+                var roleAllowed = isShipEdition
+                    ? role == "Crew"
+                    : role is "OfficeAdmin" or "Superintendent";
+
+                if (!roleAllowed)
+                {
+                    context.Fail("The token role is not permitted for this application edition.");
+                }
+
+                return Task.CompletedTask;
+            }
         };
     });
 
