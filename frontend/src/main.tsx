@@ -215,6 +215,9 @@ function App() {
     [equipment],
   );
 
+  const singleVesselDashboard =
+    (dashboard?.vesselRows.length ?? 0) === 1;
+
   if (!user) {
     return (
       <div className="login-page">
@@ -343,15 +346,16 @@ function App() {
               ? <div className="empty-state">No vessels assigned.</div>
               : <div className="dashboard-table-wrap">
                   <table className="dashboard-table">
-                    <thead>
-                      <tr>
-                        <th>Vessel</th>
-                        <th>Equipment</th>
-                        <th>OK</th>
-                        <th>Soon</th>
-                        <th>Overdue</th>
-                      </tr>
-                    </thead>
+                    {!singleVesselDashboard &&
+                      <thead>
+                        <tr>
+                          <th>Vessel</th>
+                          <th>Equipment</th>
+                          <th>OK</th>
+                          <th>Soon</th>
+                          <th>Overdue</th>
+                        </tr>
+                      </thead>}
                     <tbody>
                       {(dashboard?.vesselRows ?? []).map(row => (
                         <tr
@@ -364,11 +368,15 @@ function App() {
                           <td>
                             <strong>{row.vesselName}</strong>
                             <small>IMO {row.imoNumber}</small>
+                            {singleVesselDashboard &&
+                              <small>Equipment: {row.equipment}</small>}
                           </td>
-                          <td>{row.equipment}</td>
-                          <td className="status-ok-text">{row.ok}</td>
-                          <td className="status-soon-text">{row.soon}</td>
-                          <td className="status-overdue-text">{row.overdue}</td>
+                          {!singleVesselDashboard && <>
+                            <td>{row.equipment}</td>
+                            <td className="status-ok-text">{row.ok}</td>
+                            <td className="status-soon-text">{row.soon}</td>
+                            <td className="status-overdue-text">{row.overdue}</td>
+                          </>}
                         </tr>
                       ))}
                     </tbody>
@@ -396,11 +404,13 @@ function App() {
               <table className="dashboard-table">
                 <thead>
                   <tr>
-                    <th>Vessel</th>
+                    {!singleVesselDashboard &&
+                      <th>Vessel</th>}
                     <th>Equipment</th>
                     <th>Category</th>
-                    <th>Expiry</th>
-                    <th>Days Left</th>
+                    <th>Expiry Date</th>
+                    {!singleVesselDashboard &&
+                      <th>Days Left</th>}
                     <th>Status</th>
                   </tr>
                 </thead>
@@ -415,11 +425,13 @@ function App() {
                           if (vessel) setCurrentVessel(vessel);
                         }}
                       >
-                        <td>{item.vesselName}</td>
+                        {!singleVesselDashboard &&
+                          <td>{item.vesselName}</td>}
                         <td>{item.equipmentName}</td>
                         <td>{item.category}</td>
                         <td>{formatDate(item.expiryDate)}</td>
-                        <td>{item.daysLeft}</td>
+                        {!singleVesselDashboard &&
+                          <td>{item.daysLeft}</td>}
                         <td><span className={`status ${item.status.toLowerCase()}`}>{item.status}</span></td>
                       </tr>
                     ))}
