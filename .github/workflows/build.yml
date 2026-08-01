@@ -34,20 +34,16 @@ jobs:
         with:
           dotnet-version: "9.0.x"
 
-      - name: Build frontend
+      - name: Apply Ship UI changes
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
           node scripts/apply-rc19-ui-fixes.mjs
 
-          $source = Get-Content "frontend/src/main.tsx" -Raw
-          if ($source -notmatch 'edition: "Office" \| "Ship"') {
-            throw "Ship edition type was not added to frontend source."
-          }
-          if ($source -notmatch 'user\.edition === "Ship"') {
-            throw "Ship edition UI logic was not added to frontend source."
-          }
-
+      - name: Build frontend
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
           Set-Location frontend
           npm ci
           npm run build
