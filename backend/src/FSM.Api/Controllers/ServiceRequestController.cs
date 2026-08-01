@@ -1,5 +1,5 @@
-using System.Security.Claims;
 using System.IO.Compression;
+using System.Security.Claims;
 using FSM.Api.Services;
 using FSM.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
@@ -23,7 +23,7 @@ public sealed record GenerateServiceRequestRequest(
 [Route("api/service-request")]
 public sealed class ServiceRequestController(
     FsmDbContext db,
-    ServiceRequestExcelService excelService,
+    ServiceRequestPdfService pdfService,
     DocumentStorageService storage) : ControllerBase
 {
     [HttpPost]
@@ -79,8 +79,7 @@ public sealed class ServiceRequestController(
             });
         }
 
-
-        var excelFile = excelService.Generate(
+        var pdfFile = pdfService.Generate(
             vessel,
             equipment,
             (request.Port ?? string.Empty).Trim(),
@@ -95,16 +94,16 @@ public sealed class ServiceRequestController(
                     : character));
 
         var dateText = DateTime.UtcNow.ToString("yyyy-MM-dd");
-        var excelFileName =
-            $"Service Request - {safeVesselName} - {dateText}.xlsx";
+        var pdfFileName =
+            $"Service Request - {safeVesselName} - {dateText}.pdf";
 
         if (!request.IncludeCertificates &&
             !request.IncludeReports)
         {
             return File(
-                excelFile,
-                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                excelFileName);
+                pdfFile,
+                "application/pdf",
+                pdfFileName);
         }
 
         await using var zipStream = new MemoryStream();
@@ -114,14 +113,14 @@ public sealed class ServiceRequestController(
             ZipArchiveMode.Create,
             leaveOpen: true))
         {
-            var excelEntry = archive.CreateEntry(
-                "Service Request.xlsx",
+            var pdfEntry = archive.CreateEntry(
+                "Service Request.pdf",
                 CompressionLevel.Optimal);
 
-            await using (var entryStream = excelEntry.Open())
+            await using (var entryStream = pdfEntry.Open())
             {
                 await entryStream.WriteAsync(
-                    excelFile,
+                    pdfFile,
                     cancellationToken);
             }
 
@@ -162,9 +161,7 @@ public sealed class ServiceRequestController(
             zipStream.ToArray(),
             "application/zip",
             zipFileName);
-
     }
-
 
     private static void AddDocumentToArchive(
         ZipArchive archive,
@@ -210,8 +207,7 @@ public sealed class ServiceRequestController(
         Guid vesselId,
         CancellationToken cancellationToken)
     {
-        var role =
-            User.FindFirstValue(ClaimTypes.Role);
+        var role = User.FindFirstValue(ClaimTypes.Role);
 
         if (string.Equals(
             role,
