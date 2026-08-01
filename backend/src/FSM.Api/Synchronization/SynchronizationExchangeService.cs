@@ -207,6 +207,9 @@ public sealed class SynchronizationExchangeService(
             var existing = await db.Equipment
                 .IgnoreQueryFilters()
                 .SingleOrDefaultAsync(x => x.Id == incoming.Id, cancellationToken);
+            existing ??= await FindMatchingEquipmentAsync(
+                incoming,
+                cancellationToken);
             if (!ShouldApply(
                 existing?.LastModifiedUtc,
                 incoming.LastModifiedUtc,
@@ -351,6 +354,30 @@ public sealed class SynchronizationExchangeService(
         return (accepted, conflicts, warnings);
     }
 
+    private async Task<Equipment?> FindMatchingEquipmentAsync(
+        EquipmentSynchronizationItem incoming,
+        CancellationToken cancellationToken)
+    {
+        var candidates = await db.Equipment
+            .IgnoreQueryFilters()
+            .Where(x =>
+                x.VesselId == incoming.VesselId &&
+                x.Category == incoming.Category)
+            .ToListAsync(cancellationToken);
+
+        var incomingSerial = NormalizeKey(incoming.SerialNumber);
+        var matches = !string.IsNullOrEmpty(incomingSerial)
+            ? candidates.Where(x =>
+                NormalizeKey(x.SerialNumber) == incomingSerial)
+            : candidates.Where(x =>
+                NormalizeKey(x.EquipmentName) ==
+                    NormalizeKey(incoming.EquipmentName) &&
+                NormalizeKey(x.Maker) == NormalizeKey(incoming.Maker) &&
+                NormalizeKey(x.Model) == NormalizeKey(incoming.Model));
+        var materialized = matches.Take(2).ToList();
+        return materialized.Count == 1 ? materialized[0] : null;
+    }
+
     private bool ShouldApply(
         DateTime? existingModifiedUtc,
         DateTime incomingModifiedUtc,
@@ -391,4 +418,9 @@ public sealed class SynchronizationExchangeService(
             DateTimeKind.Local => value.ToUniversalTime(),
             _ => DateTime.SpecifyKind(value, DateTimeKind.Utc)
         };
+
+    private static string NormalizeKey(string? value) =>
+        string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : value.Trim().ToUpperInvariant();
 }
