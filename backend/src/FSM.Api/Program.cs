@@ -34,6 +34,7 @@ builder.Services.AddDbContext<FsmDbContext>(options =>
 builder.Services.AddSingleton<JwtTokenService>();
 builder.Services.AddSingleton<DocumentStorageService>();
 builder.Services.AddSingleton<ServiceRequestExcelService>();
+builder.Services.AddSingleton<ServiceRequestPdfService>();
 builder.Services.AddSingleton<InspectionListService>();
 builder.Services.Configure<NotificationSettings>(
     builder.Configuration.GetSection("Notifications"));
