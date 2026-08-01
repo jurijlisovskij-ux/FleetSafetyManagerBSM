@@ -11,6 +11,7 @@ type LoginResult = {
   fullName: string;
   email: string;
   role: "OfficeAdmin" | "Superintendent" | "Crew";
+  edition: "Office" | "Ship";
 };
 
 
@@ -93,6 +94,40 @@ type DashboardData = {
   overdue: number;
   vesselRows: DashboardVesselRow[];
   upcoming: DashboardUpcoming[];
+  synchronization: SynchronizationStatus[];
+};
+
+type SynchronizationStatus = {
+  vesselId: string;
+  vesselName: string;
+  imoNumber: string;
+  lastSynchronizationUtc?: string;
+  status: "Success" | "Warning" | "Failed";
+  pendingChanges: number;
+  automaticIntervalHours: 0 | 6 | 12 | 24;
+  currentStage: string;
+  configured: boolean;
+  remoteBaseUrl?: string;
+  lastError?: string;
+};
+
+type SynchronizationStatusResponse = {
+  edition: "Office" | "Ship";
+  applicationVersion: string;
+  vessels: SynchronizationStatus[];
+};
+
+type SynchronizationLog = {
+  id: string;
+  dateUtc: string;
+  vesselId: string;
+  vessel: string;
+  direction: string;
+  durationSeconds: number;
+  uploadedItems: number;
+  downloadedItems: number;
+  result: "Success" | "Warning" | "Failed";
+  errorMessage?: string;
 };
 
 const categories: Equipment["category"][] = [
@@ -119,6 +154,23 @@ function formatDate(value?: string) {
     month: "short",
     year: "numeric",
   }).format(new Date(`${value}T00:00:00`));
+}
+
+function formatSynchronizationDateTime(value?: string) {
+  if (!value) return { date: "Never", time: "—" };
+  const parsed = new Date(value);
+  return {
+    date: new Intl.DateTimeFormat("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    }).format(parsed),
+    time: new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    }).format(parsed),
+  };
 }
 
 function categoryToApi(category: Equipment["category"]) {
@@ -159,6 +211,8 @@ function App() {
     useState(false);
   const [showCopyEquipment, setShowCopyEquipment] =
     useState(false);
+  const [showSynchronization, setShowSynchronization] =
+    useState(false);
   const [collapsed, setCollapsed] =
     useState<Set<Equipment["category"]>>(new Set());
   const [error, setError] = useState("");
@@ -182,6 +236,10 @@ function App() {
 
         setVessels(vesselItems);
         setDashboard(dashboardData);
+
+        if (user.edition === "Ship" && vesselItems.length === 1) {
+          setCurrentVessel(vesselItems[0]);
+        }
       })
       .catch(error => setError((error as Error).message));
   }, [user]);
@@ -260,12 +318,15 @@ function App() {
   }
 
   return (
-    <div className="application">
+    <div className={`application ${user.edition === "Ship" ? "ship-edition" : "office-edition"}`}>
       <header className="topbar">
-        <div><strong>Fleet Safety Manager</strong><span>Version RC19</span></div>
+        <div><strong>Fleet Safety Manager</strong><span>Version RC20</span></div>
         <div className="session">
           <span>{user.fullName} · {user.role}</span>
-          {currentVessel &&
+          <button onClick={() => setShowSynchronization(true)}>
+            Synchronize
+          </button>
+          {currentVessel && user.edition !== "Ship" &&
             <button
               onClick={() => {
                 setCurrentVessel(null);
@@ -298,6 +359,7 @@ function App() {
             setShowVesselProfile(false);
             setShowUserAdministration(false);
             setShowCopyEquipment(false);
+            setShowSynchronization(false);
           }}>Sign Out</button>
         </div>
       </header>
@@ -439,6 +501,53 @@ function App() {
               </table>
             </div>
           </section>
+
+          {user.edition === "Office" &&
+            <section className="dashboard-section">
+              <div className="dashboard-section-heading">
+                <h2>Synchronization Status</h2>
+                <button onClick={() => setShowSynchronization(true)}>
+                  Synchronize
+                </button>
+              </div>
+              <div className="dashboard-table-wrap">
+                <table className="dashboard-table synchronization-table">
+                  <thead>
+                    <tr>
+                      <th>Vessel</th>
+                      <th>Last Sync</th>
+                      <th>Pending Changes</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(dashboard?.synchronization ?? []).map(item => {
+                      const lastSync = formatSynchronizationDateTime(
+                        item.lastSynchronizationUtc,
+                      );
+                      return (
+                        <tr key={item.vesselId}>
+                          <td>
+                            <strong>{item.vesselName}</strong>
+                            <small>IMO {item.imoNumber}</small>
+                          </td>
+                          <td>
+                            {lastSync.date}
+                            <small>{lastSync.time}</small>
+                          </td>
+                          <td>{item.pendingChanges}</td>
+                          <td>
+                            <span className={`sync-state ${item.status.toLowerCase()}`}>
+                              {item.status}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>}
         </main>
       ) : (
         <main className="workspace">
@@ -471,8 +580,7 @@ function App() {
               <span className="muted">Equipment Register</span>
               <button
                 type="button"
-                disabled
-                title="Synchronization is not configured in this build."
+                onClick={() => setShowSynchronization(true)}
               >
                 Synchronization
               </button>
@@ -770,6 +878,19 @@ function App() {
           }}
         />}
 
+      {showSynchronization &&
+        <SynchronizationDialog
+          token={user.token}
+          userRole={user.role}
+          initialVesselId={currentVessel?.id}
+          onClose={() => setShowSynchronization(false)}
+          onStatusChanged={items => {
+            setDashboard(current => current
+              ? { ...current, synchronization: items }
+              : current);
+          }}
+        />}
+
     </div>
   );
 }
@@ -779,6 +900,354 @@ function App() {
 
 
 
+
+function SynchronizationDialog({
+  token,
+  userRole,
+  initialVesselId,
+  onClose,
+  onStatusChanged,
+}: {
+  token: string;
+  userRole: LoginResult["role"];
+  initialVesselId?: string;
+  onClose: () => void;
+  onStatusChanged: (items: SynchronizationStatus[]) => void;
+}) {
+  const [statusResponse, setStatusResponse] =
+    useState<SynchronizationStatusResponse | null>(null);
+  const [logs, setLogs] = useState<SynchronizationLog[]>([]);
+  const [selectedVesselId, setSelectedVesselId] =
+    useState(initialVesselId ?? "");
+  const [intervalHours, setIntervalHours] =
+    useState<0 | 6 | 12 | 24>(24);
+  const [remoteBaseUrl, setRemoteBaseUrl] = useState("");
+  const [phase, setPhase] = useState("");
+  const [generatedToken, setGeneratedToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const selected = statusResponse?.vessels.find(
+    item => item.vesselId === selectedVesselId,
+  );
+  const lastSync = formatSynchronizationDateTime(
+    selected?.lastSynchronizationUtc,
+  );
+  const phases = [
+    "Checking connection...",
+    "Uploading changes...",
+    "Downloading updates...",
+    "Synchronization completed.",
+  ];
+  const currentPhaseIndex = phases.indexOf(phase);
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  useEffect(() => {
+    if (!selected) return;
+    setIntervalHours(selected.automaticIntervalHours);
+    setRemoteBaseUrl(selected.remoteBaseUrl ?? "");
+  }, [selected?.vesselId]);
+
+  async function loadStatus(notify = true) {
+    const response = await authFetch(
+      `${apiBaseUrl}/synchronization/status`,
+      token,
+    );
+    if (!response.ok)
+      throw new Error("Unable to load synchronization status.");
+    const body: SynchronizationStatusResponse = await response.json();
+    setStatusResponse(body);
+    if (!selectedVesselId && body.vessels.length > 0)
+      setSelectedVesselId(initialVesselId ?? body.vessels[0].vesselId);
+    if (notify) onStatusChanged(body.vessels);
+    return body;
+  }
+
+  async function loadLogs() {
+    const response = await authFetch(
+      `${apiBaseUrl}/synchronization/logs`,
+      token,
+    );
+    if (!response.ok)
+      throw new Error("Unable to load the synchronization log.");
+    setLogs(await response.json());
+  }
+
+  async function refresh() {
+    setError("");
+    try {
+      await Promise.all([loadStatus(), loadLogs()]);
+    } catch (exception) {
+      setError((exception as Error).message);
+    }
+  }
+
+  async function runSynchronization() {
+    if (!selectedVesselId) return;
+    setBusy(true);
+    setError("");
+    setPhase("Checking connection...");
+    const poll = window.setInterval(async () => {
+      try {
+        const current = await loadStatus(false);
+        const vesselStatus = current.vessels.find(
+          item => item.vesselId === selectedVesselId,
+        );
+        if (vesselStatus?.currentStage)
+          setPhase(vesselStatus.currentStage);
+      } catch {
+        // The active request reports the final error.
+      }
+    }, 750);
+
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/synchronization/run/${selectedVesselId}`,
+        token,
+        { method: "POST" },
+      );
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.message ?? "Synchronization failed.");
+      }
+      setPhase("Synchronization completed.");
+      await refresh();
+    } catch (exception) {
+      setPhase("Failed");
+      setError((exception as Error).message);
+      await loadStatus().catch(() => undefined);
+      await loadLogs().catch(() => undefined);
+    } finally {
+      window.clearInterval(poll);
+      setBusy(false);
+    }
+  }
+
+  async function saveSettings() {
+    if (!selectedVesselId) return;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/synchronization/settings/${selectedVesselId}`,
+        token,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            automaticIntervalHours: intervalHours,
+            remoteBaseUrl: remoteBaseUrl.trim() || null,
+          }),
+        },
+      );
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.message ?? "Unable to save synchronization settings.");
+      }
+      await loadStatus();
+    } catch (exception) {
+      setError((exception as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function rotateToken() {
+    if (!selectedVesselId ||
+        !window.confirm("Generate a new vessel synchronization token? The previous token will stop working.")) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setGeneratedToken("");
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/synchronization/token/${selectedVesselId}`,
+        token,
+        { method: "POST" },
+      );
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.message ?? "Unable to generate the vessel token.");
+      }
+      const body = await response.json();
+      setGeneratedToken(body.token);
+      await loadStatus();
+    } catch (exception) {
+      setError((exception as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const canRun = Boolean(
+    selected?.configured &&
+    (statusResponse?.edition === "Ship" || selected?.remoteBaseUrl),
+  );
+
+  return (
+    <div className="modal">
+      <div className="synchronization-dialog">
+        <div className="service-request-header">
+          <div>
+            <h2>Synchronization</h2>
+            <p>
+              {statusResponse?.edition ?? "—"} Edition · {statusResponse?.applicationVersion ?? "RC20"}
+            </p>
+          </div>
+          <button type="button" onClick={onClose}>Close</button>
+        </div>
+
+        {error && <div className="error">{error}</div>}
+
+        <div className="synchronization-vessel-tabs">
+          {(statusResponse?.vessels ?? []).map(item => (
+            <button
+              key={item.vesselId}
+              className={item.vesselId === selectedVesselId ? "selected" : ""}
+              onClick={() => setSelectedVesselId(item.vesselId)}
+            >
+              {item.vesselName}
+            </button>
+          ))}
+        </div>
+
+        {selected && <>
+          <div className="synchronization-summary">
+            <div>
+              <span>Last synchronization:</span>
+              <strong>{lastSync.date}</strong>
+              <small>{lastSync.time}</small>
+            </div>
+            <div>
+              <span>Status:</span>
+              <strong className={`sync-state ${selected.status.toLowerCase()}`}>
+                {selected.status}
+              </strong>
+              {selected.lastError && <small>{selected.lastError}</small>}
+            </div>
+            <div>
+              <span>Pending changes:</span>
+              <strong>{selected.pendingChanges}</strong>
+              <small>{selected.configured ? "Connection configured" : "Configuration required"}</small>
+            </div>
+          </div>
+
+          <div className="synchronization-progress" aria-live="polite">
+            {phases.map((item, index) => (
+              <div
+                key={item}
+                className={
+                  item === phase
+                    ? "active"
+                    : currentPhaseIndex > index
+                      ? "complete"
+                      : ""
+                }
+              >
+                <span>{currentPhaseIndex > index ? "✓" : index + 1}</span>
+                {item}
+              </div>
+            ))}
+            {phase === "Failed" &&
+              <div className="failed"><span>!</span>Synchronization failed.</div>}
+          </div>
+
+          <div className="synchronization-actions">
+            <button
+              className="primary"
+              disabled={busy || !canRun}
+              title={!canRun ? "Configure an HTTPS endpoint and vessel token first." : ""}
+              onClick={runSynchronization}
+            >
+              {busy ? "Synchronizing..." : "Synchronize"}
+            </button>
+            <button disabled={busy} onClick={refresh}>Refresh</button>
+          </div>
+
+          {userRole === "OfficeAdmin" &&
+            <section className="synchronization-settings">
+              <h3>System Administrator Settings</h3>
+              <label>
+                Automatic synchronization
+                <select
+                  value={intervalHours}
+                  onChange={event => setIntervalHours(
+                    Number(event.target.value) as 0 | 6 | 12 | 24,
+                  )}
+                >
+                  <option value={6}>Every 6 hours</option>
+                  <option value={12}>Every 12 hours</option>
+                  <option value={24}>Every 24 hours</option>
+                  <option value={0}>Manual only</option>
+                </select>
+              </label>
+              <label>
+                Remote Ship HTTPS URL (optional for Ship-initiated sync)
+                <input
+                  type="url"
+                  placeholder="https://vessel.example.com"
+                  value={remoteBaseUrl}
+                  onChange={event => setRemoteBaseUrl(event.target.value)}
+                />
+              </label>
+              <div className="synchronization-actions">
+                <button disabled={busy} onClick={saveSettings}>Save Settings</button>
+                <button disabled={busy} onClick={rotateToken}>Generate Vessel Token</button>
+              </div>
+              {generatedToken &&
+                <div className="generated-token">
+                  <strong>New vessel token — copy it now:</strong>
+                  <code>{generatedToken}</code>
+                  <button onClick={() => navigator.clipboard.writeText(generatedToken)}>
+                    Copy
+                  </button>
+                </div>}
+            </section>}
+        </>}
+
+        <section className="synchronization-log">
+          <h3>Synchronization Log</h3>
+          <div className="dashboard-table-wrap">
+            <table className="dashboard-table synchronization-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Vessel</th>
+                  <th>Direction</th>
+                  <th>Duration</th>
+                  <th>Uploaded</th>
+                  <th>Downloaded</th>
+                  <th>Result</th>
+                  <th>Error message</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.map(log => (
+                  <tr key={log.id}>
+                    <td>{new Date(log.dateUtc).toLocaleString("en-GB")}</td>
+                    <td>{log.vessel}</td>
+                    <td>{log.direction}</td>
+                    <td>{log.durationSeconds}s</td>
+                    <td>{log.uploadedItems}</td>
+                    <td>{log.downloadedItems}</td>
+                    <td><span className={`sync-state ${log.result.toLowerCase()}`}>{log.result}</span></td>
+                    <td>{log.errorMessage ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {logs.length === 0 &&
+            <div className="empty-state">No synchronization attempts recorded.</div>}
+        </section>
+      </div>
+    </div>
+  );
+}
 
 type CopyMode = "AddOnlyNew" | "ReplaceExisting";
 

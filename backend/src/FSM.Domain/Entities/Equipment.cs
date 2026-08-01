@@ -2,7 +2,7 @@ using FSM.Domain.Enums;
 
 namespace FSM.Domain.Entities;
 
-public sealed class Equipment
+public sealed class Equipment : ISynchronizableEntity
 {
     public Guid Id { get; set; }
     public Guid VesselId { get; set; }
@@ -20,6 +20,8 @@ public sealed class Equipment
     public string? CurrentReportFileName { get; set; }
     public string? CurrentCertificatePath { get; set; }
     public string? CurrentCertificateFileName { get; set; }
+    public DateTime LastModifiedUtc { get; set; } = DateTime.UtcNow;
+    public bool IsDeleted { get; set; }
 
     public EquipmentStatus CalculateStatus(DateOnly today, int reminderDays)
     {

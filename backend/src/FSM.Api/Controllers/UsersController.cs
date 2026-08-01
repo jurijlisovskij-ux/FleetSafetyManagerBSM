@@ -105,7 +105,6 @@ public sealed class UsersController(FsmDbContext db) : ControllerBase
         CancellationToken cancellationToken)
     {
         var user = await db.Users
-            .Include(x => x.VesselAssignments)
             .SingleOrDefaultAsync(
                 x => x.Id == userId,
                 cancellationToken);
@@ -133,20 +132,39 @@ public sealed class UsersController(FsmDbContext db) : ControllerBase
                 PasswordHasher.Hash(request.Password);
         }
 
-        db.UserVessels.RemoveRange(
-            user.VesselAssignments);
+        var assignments = await db.UserVessels
+            .IgnoreQueryFilters()
+            .Where(x => x.UserId == userId)
+            .ToListAsync(cancellationToken);
+        var requestedVesselIds = request.Role == UserRole.OfficeAdmin
+            ? new HashSet<Guid>()
+            : request.VesselIds.Distinct().ToHashSet();
+        var changedUtc = DateTime.UtcNow;
 
-        if (request.Role != UserRole.OfficeAdmin)
+        foreach (var assignment in assignments)
         {
-            foreach (var vesselId in request.VesselIds.Distinct())
+            var shouldBeActive = requestedVesselIds.Contains(
+                assignment.VesselId);
+            if (assignment.IsDeleted == shouldBeActive)
             {
-                db.UserVessels.Add(new UserVessel
-                {
-                    UserId = user.Id,
-                    VesselId = vesselId
-                });
+                assignment.IsDeleted = !shouldBeActive;
+                assignment.LastModifiedUtc = changedUtc;
             }
         }
+
+        foreach (var vesselId in requestedVesselIds)
+        {
+            if (assignments.Any(x => x.VesselId == vesselId))
+                continue;
+            db.UserVessels.Add(new UserVessel
+            {
+                UserId = user.Id,
+                VesselId = vesselId,
+                LastModifiedUtc = changedUtc
+            });
+        }
+
+        user.LastModifiedUtc = changedUtc;
 
         await db.SaveChangesAsync(cancellationToken);
 

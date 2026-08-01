@@ -98,6 +98,33 @@ public sealed class DocumentStorageService(IConfiguration configuration)
         return absolutePath;
     }
 
+    public async Task<string> SaveServiceRequestAsync(
+        string imoNumber,
+        byte[] content,
+        CancellationToken cancellationToken)
+    {
+        var relativeDirectory = Path.Combine(
+            "service-requests",
+            imoNumber);
+        var absoluteDirectory = Path.Combine(
+            rootPath,
+            relativeDirectory);
+        Directory.CreateDirectory(absoluteDirectory);
+        var finalName =
+            $"service-request-{DateTime.UtcNow:yyyyMMdd-HHmmss}-{Guid.NewGuid():N}.xlsx";
+        var finalPath = Path.Combine(absoluteDirectory, finalName);
+        var temporaryPath = finalPath + ".tmp";
+
+        await File.WriteAllBytesAsync(
+            temporaryPath,
+            content,
+            cancellationToken);
+        File.Move(temporaryPath, finalPath, overwrite: false);
+
+        return Path.Combine(relativeDirectory, finalName)
+            .Replace("\\", "/");
+    }
+
     public void DeleteIfExists(string? relativePath)
     {
         if (string.IsNullOrWhiteSpace(relativePath))

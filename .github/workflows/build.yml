@@ -1,13 +1,15 @@
-name: Build FSM RC19 Windows Installers
+name: Build FSM RC20 Windows Installers
 
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, feature/ship-office-sync]
     paths:
       - "frontend/**"
       - "backend/**"
       - "installer/**"
+      - "native/**"
+      - "BUILD_RC20.ps1"
       - "scripts/**"
       - ".github/workflows/build.yml"
 
@@ -34,12 +36,6 @@ jobs:
         with:
           dotnet-version: "9.0.x"
 
-      - name: Apply Ship UI changes
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          node scripts/apply-rc19-ui-fixes.mjs
-
       - name: Build frontend
         shell: pwsh
         run: |
@@ -50,11 +46,14 @@ jobs:
           Set-Location ..
 
           $bundle = Get-Content "frontend/dist/assets/*.js" -Raw
-          if ($bundle -notmatch "Version RC19") {
-            throw "Frontend bundle does not contain Version RC19."
+          if ($bundle -notmatch "Version RC20") {
+            throw "Frontend bundle does not contain Version RC20."
           }
-          if ($bundle -match "Version RC18") {
-            throw "Frontend bundle still contains Version RC18."
+          if ($bundle -notmatch "Synchronization completed") {
+            throw "Frontend bundle does not contain the RC20 synchronization UI."
+          }
+          if ($bundle -match "Version RC19") {
+            throw "Frontend bundle still contains Version RC19."
           }
 
           $wwwroot = "backend/src/FSM.Api/wwwroot"
@@ -75,7 +74,7 @@ jobs:
             -p:PublishReadyToRun=false `
             -o publish
 
-          @("Data", "Documents/reports", "Documents/certificates", "Backups", "Logs") |
+          @("Data", "Data/SynchronizationTransfers", "Data/SynchronizationDownloads", "Documents/reports", "Documents/certificates", "Documents/service-requests", "Backups", "Logs") |
             ForEach-Object { New-Item -ItemType Directory -Force "publish/$_" | Out-Null }
 
           if (-not (Test-Path "publish/FSM.Api.exe")) {
@@ -91,7 +90,7 @@ jobs:
         run: |
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
             /DMyEdition=Office `
-            /DOutputBase=FleetSafetyManager_RC19_Office_Setup `
+            /DOutputBase=FleetSafetyManager_RC20_Office_Setup `
             installer/FleetSafetyManager.iss
 
       - name: Build Ship installer
@@ -99,14 +98,14 @@ jobs:
         run: |
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
             /DMyEdition=Ship `
-            /DOutputBase=FleetSafetyManager_RC19_Ship_Setup `
+            /DOutputBase=FleetSafetyManager_RC20_Ship_Setup `
             installer/FleetSafetyManager.iss
 
       - name: Verify installer files
         shell: pwsh
         run: |
-          $office = "installer/output/FleetSafetyManager_RC19_Office_Setup.exe"
-          $ship = "installer/output/FleetSafetyManager_RC19_Ship_Setup.exe"
+          $office = "installer/output/FleetSafetyManager_RC20_Office_Setup.exe"
+          $ship = "installer/output/FleetSafetyManager_RC20_Ship_Setup.exe"
           if (-not (Test-Path $office)) { throw "Office installer is missing." }
           if (-not (Test-Path $ship)) { throw "Ship installer is missing." }
           Get-FileHash $office -Algorithm SHA256
@@ -115,7 +114,7 @@ jobs:
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
-          name: FleetSafetyManager-RC19-Windows-Installers
+          name: FleetSafetyManager-RC20-Windows-Installers
           path: installer/output/*.exe
           if-no-files-found: error
           retention-days: 30

@@ -25,11 +25,88 @@ public static class SchemaUpgrade
                 db, "vessels", "InvoicingDetails", "TEXT");
             await AddColumnIfMissingAsync(
                 db, "vessels", "AccountingEmail", "TEXT");
+            await AddSynchronizationColumnsAsync(db, "users");
+            await AddSynchronizationColumnsAsync(db, "vessels");
+            await AddSynchronizationColumnsAsync(db, "equipment");
+            await AddSynchronizationColumnsAsync(db, "user_vessels");
+            await CreateSynchronizationTablesAsync(db);
         }
         finally
         {
             await db.Database.CloseConnectionAsync();
         }
+    }
+
+    private static async Task AddSynchronizationColumnsAsync(
+        FsmDbContext db,
+        string tableName)
+    {
+        await AddColumnIfMissingAsync(
+            db,
+            tableName,
+            "LastModifiedUtc",
+            "TEXT NOT NULL DEFAULT '1970-01-01 00:00:00'");
+        await AddColumnIfMissingAsync(
+            db,
+            tableName,
+            "IsDeleted",
+            "INTEGER NOT NULL DEFAULT 0");
+    }
+
+    private static async Task CreateSynchronizationTablesAsync(
+        FsmDbContext db)
+    {
+        const string sql = """
+            CREATE TABLE IF NOT EXISTS synchronization_settings (
+                VesselId TEXT NOT NULL PRIMARY KEY,
+                RemoteBaseUrl TEXT NULL,
+                TokenHash TEXT NULL,
+                ProtectedToken TEXT NULL,
+                AutomaticIntervalHours INTEGER NOT NULL DEFAULT 24,
+                LastUploadedUtc TEXT NOT NULL DEFAULT '1970-01-01 00:00:00',
+                RemoteCursorUtc TEXT NOT NULL DEFAULT '1970-01-01 00:00:00',
+                LastModifiedUtc TEXT NOT NULL DEFAULT '1970-01-01 00:00:00',
+                LastAttemptUtc TEXT NULL,
+                LastSynchronizationUtc TEXT NULL,
+                LastStatus TEXT NOT NULL DEFAULT 'Warning',
+                CurrentStage TEXT NOT NULL DEFAULT 'Idle',
+                LastError TEXT NULL,
+                FOREIGN KEY (VesselId) REFERENCES vessels (Id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS synchronization_logs (
+                Id TEXT NOT NULL PRIMARY KEY,
+                VesselId TEXT NOT NULL,
+                DateUtc TEXT NOT NULL,
+                Direction TEXT NOT NULL,
+                DurationMilliseconds INTEGER NOT NULL,
+                UploadedItems INTEGER NOT NULL,
+                DownloadedItems INTEGER NOT NULL,
+                Result TEXT NOT NULL,
+                ErrorMessage TEXT NULL,
+                FOREIGN KEY (VesselId) REFERENCES vessels (Id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_synchronization_logs_VesselId_DateUtc
+                ON synchronization_logs (VesselId, DateUtc);
+
+            CREATE TABLE IF NOT EXISTS synchronization_transfers (
+                Id TEXT NOT NULL PRIMARY KEY,
+                VesselId TEXT NOT NULL,
+                RelativePath TEXT NOT NULL,
+                Checksum TEXT NOT NULL,
+                TotalBytes INTEGER NOT NULL,
+                ReceivedBytes INTEGER NOT NULL,
+                TemporaryPath TEXT NOT NULL,
+                FileLastModifiedUtc TEXT NOT NULL,
+                UpdatedUtc TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_synchronization_transfers_Vessel_Path_Checksum
+                ON synchronization_transfers (VesselId, RelativePath, Checksum);
+            """;
+
+        await db.Database.ExecuteSqlRawAsync(sql);
     }
 
     private static async Task AddColumnIfMissingAsync(

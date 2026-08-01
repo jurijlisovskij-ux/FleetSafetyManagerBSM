@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using FSM.Api.Synchronization;
 using FSM.Domain.Enums;
 using FSM.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
@@ -10,7 +11,9 @@ namespace FSM.Api.Controllers;
 [ApiController]
 [Authorize]
 [Route("api/dashboard")]
-public sealed class DashboardController(FsmDbContext db) : ControllerBase
+public sealed class DashboardController(
+    FsmDbContext db,
+    SynchronizationStatusService synchronizationStatuses) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> Get(CancellationToken cancellationToken)
@@ -36,6 +39,9 @@ public sealed class DashboardController(FsmDbContext db) : ControllerBase
             .ToListAsync(cancellationToken);
 
         var vesselIds = vessels.Select(x => x.Id).ToList();
+        var synchronization = await synchronizationStatuses.GetAsync(
+            vesselIds,
+            cancellationToken);
         var equipment = await db.Equipment.AsNoTracking()
             .Where(x => vesselIds.Contains(x.VesselId))
             .ToListAsync(cancellationToken);
@@ -101,7 +107,8 @@ public sealed class DashboardController(FsmDbContext db) : ControllerBase
             Soon = statuses.Count(x => x.Status == EquipmentStatus.Soon),
             Overdue = statuses.Count(x => x.Status == EquipmentStatus.Overdue),
             VesselRows = vesselRows,
-            Upcoming = upcoming
+            Upcoming = upcoming,
+            Synchronization = synchronization
         });
     }
 }

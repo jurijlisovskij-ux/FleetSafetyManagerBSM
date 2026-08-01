@@ -3,11 +3,11 @@
 #endif
 
 #ifndef OutputBase
-  #define OutputBase "FleetSafetyManager_RC19_Setup"
+  #define OutputBase "FleetSafetyManager_RC20_Setup"
 #endif
 
 #define AppName "Fleet Safety Manager"
-#define AppVersion "1.0.0-RC19"
+#define AppVersion "1.0.0-RC20"
 #define ServiceName "FleetSafetyManager"
 #define AppUrl "http://127.0.0.1:8080/"
 
@@ -43,17 +43,18 @@ Name: "{app}\Data"; Flags: uninsneveruninstall
 Name: "{app}\Documents"; Flags: uninsneveruninstall
 Name: "{app}\Documents\reports"; Flags: uninsneveruninstall
 Name: "{app}\Documents\certificates"; Flags: uninsneveruninstall
+Name: "{app}\Documents\service-requests"; Flags: uninsneveruninstall
 Name: "{app}\Backups"; Flags: uninsneveruninstall
 Name: "{app}\Logs"; Flags: uninsneveruninstall
 
 [Icons]
-Name: "{autodesktop}\Fleet Safety Manager RC19"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\FleetSafetyManagerLauncher.vbs"""; WorkingDir: "{app}"; Comment: "Open Fleet Safety Manager RC19"
-Name: "{group}\Fleet Safety Manager RC19"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\FleetSafetyManagerLauncher.vbs"""; WorkingDir: "{app}"; Comment: "Open Fleet Safety Manager RC19"
+Name: "{autodesktop}\Fleet Safety Manager RC20"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\FleetSafetyManagerLauncher.vbs"""; WorkingDir: "{app}"; Comment: "Open Fleet Safety Manager RC20"
+Name: "{group}\Fleet Safety Manager RC20"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\FleetSafetyManagerLauncher.vbs"""; WorkingDir: "{app}"; Comment: "Open Fleet Safety Manager RC20"
 Name: "{group}\Fleet Safety Manager Data"; Filename: "{app}"
 Name: "{group}\Uninstall Fleet Safety Manager"; Filename: "{uninstallexe}"
 
 [Run]
-Filename: "{sys}\wscript.exe"; Parameters: """{app}\FleetSafetyManagerLauncher.vbs"""; Description: "Open Fleet Safety Manager RC19"; Flags: postinstall nowait skipifsilent
+Filename: "{sys}\wscript.exe"; Parameters: """{app}\FleetSafetyManagerLauncher.vbs"""; Description: "Open Fleet Safety Manager RC20"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
 Filename: "{cmd}"; Parameters: "/C sc stop {#ServiceName}"; Flags: runhidden waituntilterminated; RunOnceId: "StopService"
@@ -114,19 +115,19 @@ begin
 
   if ServiceExists('{#ServiceName}') then
   begin
-    CommandLine := '/C sc config {#ServiceName} binPath= "' + BinPath + '" start= auto DisplayName= "Fleet Safety Manager RC19"';
+    CommandLine := '/C sc config {#ServiceName} binPath= "' + BinPath + '" start= auto DisplayName= "Fleet Safety Manager RC20"';
     Exec(ExpandConstant('{cmd}'), CommandLine, '', SW_HIDE,
       ewWaitUntilTerminated, ResultCode);
   end
   else
   begin
-    CommandLine := '/C sc create {#ServiceName} binPath= "' + BinPath + '" start= auto DisplayName= "Fleet Safety Manager RC19"';
+    CommandLine := '/C sc create {#ServiceName} binPath= "' + BinPath + '" start= auto DisplayName= "Fleet Safety Manager RC20"';
     Exec(ExpandConstant('{cmd}'), CommandLine, '', SW_HIDE,
       ewWaitUntilTerminated, ResultCode);
   end;
 
   Exec(ExpandConstant('{cmd}'),
-    '/C sc description {#ServiceName} "Fleet Safety Manager {#MyEdition} Edition RC19"',
+    '/C sc description {#ServiceName} "Fleet Safety Manager {#MyEdition} Edition RC20"',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec(ExpandConstant('{cmd}'),
     '/C sc failure {#ServiceName} reset= 86400 actions= restart/5000/restart/15000/restart/30000',

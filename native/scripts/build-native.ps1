@@ -39,8 +39,11 @@ dotnet publish (Join-Path $Root "backend\src\FSM.Api\FSM.Api.csproj") `
 
 foreach ($folder in @(
     "Data",
+    "Data\SynchronizationTransfers",
+    "Data\SynchronizationDownloads",
     "Documents\reports",
     "Documents\certificates",
+    "Documents\service-requests",
     "Backups",
     "Logs"
 )) {

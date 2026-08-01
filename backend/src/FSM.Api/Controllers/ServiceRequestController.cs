@@ -98,6 +98,11 @@ public sealed class ServiceRequestController(
         var excelFileName =
             $"Service Request - {safeVesselName} - {dateText}.xlsx";
 
+        await storage.SaveServiceRequestAsync(
+            vessel.ImoNumber,
+            excelFile,
+            cancellationToken);
+
         if (!request.IncludeCertificates &&
             !request.IncludeReports)
         {

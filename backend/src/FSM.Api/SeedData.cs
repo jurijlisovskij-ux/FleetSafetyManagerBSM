@@ -10,7 +10,6 @@ public static class SeedData
 {
     public static async Task InitializeAsync(FsmDbContext db)
     {
-        await db.Database.EnsureCreatedAsync();
         if (await db.Users.AnyAsync()) return;
 
         var admin = new User

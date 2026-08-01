@@ -3,8 +3,11 @@ using System.Text;
 using FSM.Api;
 using FSM.Api.Auth;
 using FSM.Api.Services;
+using FSM.Api.Synchronization;
 using FSM.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.AspNetCore.DataProtection;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
@@ -39,8 +42,28 @@ builder.Services.Configure<NotificationSettings>(
     builder.Configuration.GetSection("Notifications"));
 builder.Services.Configure<SmtpSettings>(
     builder.Configuration.GetSection("Smtp"));
+builder.Services.Configure<SynchronizationOptions>(
+    builder.Configuration.GetSection(SynchronizationOptions.SectionName));
 builder.Services.AddSingleton<EmailSender>();
 builder.Services.AddHostedService<DailyNotificationWorker>();
+builder.Services.AddDataProtection()
+    .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine("Data", "Keys")));
+builder.Services.AddHttpClient("Synchronization", client =>
+{
+    var timeoutMinutes = builder.Configuration.GetValue<int?>(
+        "Synchronization:RequestTimeoutMinutes") ?? 10;
+    client.Timeout = TimeSpan.FromMinutes(Math.Max(1, timeoutMinutes));
+});
+builder.Services.AddScoped<SynchronizationTokenService>();
+builder.Services.AddScoped<SynchronizationFileService>();
+builder.Services.AddScoped<SynchronizationExchangeService>();
+builder.Services.AddScoped<SynchronizationStatusService>();
+builder.Services.AddScoped<SynchronizationClient>();
+builder.Services.AddHostedService<SynchronizationWorker>();
+builder.Services.Configure<ForwardedHeadersOptions>(options =>
+{
+    options.ForwardedHeaders = ForwardedHeaders.XForwardedProto;
+});
 
 var jwtKey = builder.Configuration["Jwt:Key"]
     ?? throw new InvalidOperationException("JWT key is missing.");
@@ -89,6 +112,7 @@ builder.Services.AddAuthorization();
 
 var app = builder.Build();
 
+app.UseForwardedHeaders();
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
@@ -105,8 +129,9 @@ app.MapFallbackToFile("index.html");
 using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<FsmDbContext>();
-    await SeedData.InitializeAsync(db);
+    await db.Database.EnsureCreatedAsync();
     await SchemaUpgrade.ApplyAsync(db);
+    await SeedData.InitializeAsync(db);
 }
 
 app.Run();
