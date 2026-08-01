@@ -78,7 +78,7 @@ begin
     Exec(ExpandConstant('{cmd}'), '/C sc stop {#ServiceName}', '', SW_HIDE,
       ewWaitUntilTerminated, ResultCode);
 
-  ; Also stop portable or older copies that were not installed as a service.
+  // Also stop portable or older copies that were not installed as a service.
   Exec(ExpandConstant('{cmd}'), '/C taskkill /F /IM FSM.Api.exe /T', '', SW_HIDE,
     ewWaitUntilTerminated, ResultCode);
 
