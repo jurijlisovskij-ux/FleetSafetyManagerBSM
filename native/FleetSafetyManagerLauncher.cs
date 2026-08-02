@@ -26,8 +26,7 @@ internal static class Program
     private static int Main(string[] args)
     {
         string installDirectory = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
-        string logPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-            "FleetSafetyManagerLauncher.log");
+        string logPath = Path.Combine(installDirectory, "launcher.log");
 
         try
         {
@@ -42,7 +41,7 @@ internal static class Program
                 return 0;
 
             if (!SiteIsReady())
-                StartService(executable);
+                StartApplication(executable, applicationDirectory);
 
             for (int attempt = 0; attempt < ReadyAttempts; attempt++)
             {
@@ -134,7 +133,7 @@ internal static class Program
         throw new InvalidDataException("Cannot recreate edition.txt because appsettings.json has no valid Edition value: " + settingsPath);
     }
 
-    private static void StartService(string expectedExecutable)
+    private static void StartApplication(string executable, string applicationDirectory)
     {
         ProcessStartInfo info = new ProcessStartInfo
         {
@@ -152,9 +151,20 @@ internal static class Program
             string output = process.StandardOutput.ReadToEnd();
             string error = process.StandardError.ReadToEnd();
             process.WaitForExit(10000);
-            if (process.ExitCode != 0 && process.ExitCode != 1056)
-                throw new InvalidOperationException("Windows service startup failed for " + expectedExecutable +
-                    " (sc.exe exit " + process.ExitCode + "): " + (error + " " + output).Trim());
+            if (process.ExitCode == 0 || process.ExitCode == 1056)
+                return;
+
+            ProcessStartInfo fallback = new ProcessStartInfo
+            {
+                FileName = executable,
+                Arguments = "--urls http://127.0.0.1:8080",
+                WorkingDirectory = applicationDirectory,
+                CreateNoWindow = true,
+                UseShellExecute = false
+            };
+            if (Process.Start(fallback) == null)
+                throw new InvalidOperationException("Windows service startup failed and the application could not be started directly (sc.exe exit " +
+                    process.ExitCode + "): " + (error + " " + output).Trim());
         }
     }
 

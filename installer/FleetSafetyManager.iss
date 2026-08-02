@@ -22,6 +22,7 @@ AppName={#AppName} {#MyEdition}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#MyEdition} {#AppVersion}
 DefaultDirName={localappdata}\FleetSafetyManager
+UsePreviousAppDir=no
 DefaultGroupName=Fleet Safety Manager
 OutputDir=output
 OutputBaseFilename={#OutputBase}
@@ -40,9 +41,6 @@ UninstallDisplayName={#AppName} {#MyEdition}
 UninstallDisplayIcon={app}\FleetSafetyManager.ico
 SetupIconFile=FleetSafetyManager.ico
 
-[Tasks]
-Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
-
 [Files]
 Source: "..\publish\*"; DestDir: "{app}\Releases\{#ReleaseName}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\publish\FleetSafetyManagerLauncher.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -59,13 +57,17 @@ Name: "{app}\Releases\{#ReleaseName}\Backups"
 Name: "{app}\Releases\{#ReleaseName}\Logs"
 
 [Icons]
-Name: "{autodesktop}\Fleet Safety Manager {#MyEdition}"; Filename: "{app}\FleetSafetyManagerLauncher.exe"; WorkingDir: "{app}"; IconFilename: "{app}\FleetSafetyManager.ico"; Comment: "Open Fleet Safety Manager {#MyEdition}"; Tasks: desktopicon
-Name: "{group}\Fleet Safety Manager {#MyEdition}"; Filename: "{app}\FleetSafetyManagerLauncher.exe"; WorkingDir: "{app}"; IconFilename: "{app}\FleetSafetyManager.ico"; Comment: "Open Fleet Safety Manager {#MyEdition}"
+Name: "{autodesktop}\Fleet Safety Manager"; Filename: "{app}\FleetSafetyManagerLauncher.exe"; WorkingDir: "{app}"; IconFilename: "{app}\FleetSafetyManager.ico"; Comment: "Open Fleet Safety Manager {#MyEdition}"
+Name: "{group}\Fleet Safety Manager"; Filename: "{app}\FleetSafetyManagerLauncher.exe"; WorkingDir: "{app}"; IconFilename: "{app}\FleetSafetyManager.ico"; Comment: "Open Fleet Safety Manager {#MyEdition}"
 Name: "{group}\Fleet Safety Manager Data"; Filename: "{app}"
 Name: "{group}\Uninstall Fleet Safety Manager"; Filename: "{uninstallexe}"
 
 [InstallDelete]
-Type: files; Name: "{autodesktop}\Fleet Safety Manager RC20.lnk"
+Type: files; Name: "{commondesktop}\Fleet Safety Manager*.lnk"
+Type: files; Name: "{userdesktop}\Fleet Safety Manager*.lnk"
+Type: filesandordirs; Name: "{commonprograms}\Fleet Safety Manager"
+Type: filesandordirs; Name: "{userprograms}\Fleet Safety Manager"
+Type: files; Name: "{localappdata}\FleetSafetyManagerLauncher.log"
 
 [Run]
 Filename: "{app}\FleetSafetyManagerLauncher.exe"; WorkingDir: "{app}"; Description: "Open Fleet Safety Manager {#MyEdition}"; Flags: postinstall nowait skipifsilent
@@ -142,6 +144,24 @@ begin
   end;
 end;
 
+function LegacyInstallPath: string;
+begin
+  Result := ExpandConstant('{autopf}\Fleet Safety Manager');
+  if CompareText(Result, ExpandConstant('{app}')) = 0 then
+    Result := '';
+end;
+
+function PersistentDataSource: string;
+begin
+  Result := CurrentReleasePath;
+  if (Result = '') or (not DirExists(Result)) then
+  begin
+    Result := LegacyInstallPath;
+    if (Result = '') or (not DirExists(Result)) then
+      Result := '';
+  end;
+end;
+
 procedure CopyPersistentData(const OldReleasePath, NewReleasePath: string);
 var
   ResultCode: Integer;
@@ -214,14 +234,14 @@ begin
     RaiseException('The Fleet Safety Manager RC20 service could not start.');
 end;
 
-procedure RemoveObsoleteRC19Releases(const ActiveReleasePath: string);
+procedure RemoveReleasePattern(const Pattern, ActiveReleasePath: string);
 var
   FindRec: TFindRec;
   ReleasesPath: string;
   Candidate: string;
 begin
   ReleasesPath := ExpandConstant('{app}\Releases');
-  if FindFirst(ReleasesPath + '\RC19_*', FindRec) then
+  if FindFirst(ReleasesPath + '\' + Pattern, FindRec) then
   begin
     try
       repeat
@@ -238,6 +258,52 @@ begin
   end;
 end;
 
+procedure RemoveObsoleteReleases(const ActiveReleasePath: string);
+begin
+  RemoveReleasePattern('RC19_*', ActiveReleasePath);
+  RemoveReleasePattern('RC20_*', ActiveReleasePath);
+end;
+
+function IsPersistentFolder(const FolderName: string): Boolean;
+begin
+  Result := (CompareText(FolderName, 'Data') = 0) or
+    (CompareText(FolderName, 'Documents') = 0) or
+    (CompareText(FolderName, 'Backups') = 0) or
+    (CompareText(FolderName, 'Logs') = 0);
+end;
+
+procedure RemoveLegacyProgramFilesBinaries;
+var
+  FindRec: TFindRec;
+  LegacyPath: string;
+  Candidate: string;
+begin
+  LegacyPath := LegacyInstallPath;
+  if (LegacyPath = '') or (not DirExists(LegacyPath)) then
+    exit;
+
+  if FindFirst(LegacyPath + '\*', FindRec) then
+  begin
+    try
+      repeat
+        if (FindRec.Name <> '.') and (FindRec.Name <> '..') then
+        begin
+          Candidate := LegacyPath + '\' + FindRec.Name;
+          if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0 then
+          begin
+            if not IsPersistentFolder(FindRec.Name) then
+              DelTree(Candidate, True, True, True);
+          end
+          else
+            DeleteFile(Candidate);
+        end;
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   NewReleasePath: string;
@@ -246,7 +312,7 @@ begin
   if CurStep = ssPostInstall then
   begin
     NewReleasePath := ExpandConstant('{app}\Releases\{#ReleaseName}');
-    OldReleasePath := CurrentReleasePath;
+    OldReleasePath := PersistentDataSource;
     UpdateEditionConfiguration;
     VerifyRelease(NewReleasePath);
     CopyPersistentData(OldReleasePath, NewReleasePath);
@@ -257,6 +323,7 @@ begin
     if not SaveStringToFile(ExpandConstant('{app}\edition.txt'),
       '{#MyEdition}', False) then
       RaiseException('Could not update edition.txt.');
-    RemoveObsoleteRC19Releases(NewReleasePath);
+    RemoveObsoleteReleases(NewReleasePath);
+    RemoveLegacyProgramFilesBinaries;
   end;
 end;

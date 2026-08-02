@@ -106,6 +106,8 @@ jobs:
             throw "Published application is missing the vessel creation UI."
           }
 
+          ./scripts/test-desktop-launcher.ps1
+
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup --no-progress -y
