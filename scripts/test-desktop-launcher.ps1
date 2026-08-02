@@ -5,9 +5,14 @@ $publish = Join-Path $root "publish"
 $launcher = Join-Path $publish "FleetSafetyManagerLauncher.exe"
 $installer = Get-Content (Join-Path $root "installer\FleetSafetyManager.iss") -Raw
 $command = Get-Content (Join-Path $root "installer\Launch Fleet Safety Manager.cmd") -Raw
+$project = Get-Content (Join-Path $root "backend\src\FSM.Api\FSM.Api.csproj") -Raw
 
 if (-not (Test-Path -LiteralPath $launcher)) {
     throw "Launcher build is missing: $launcher"
+}
+if ($project -notmatch '<OutputType>Exe</OutputType>' -or
+    $project -notmatch '<AssemblyName>FSM\.Api</AssemblyName>') {
+    throw "FSM.Api must explicitly publish an FSM.Api.exe application host."
 }
 
 $shortcutTarget = 'Filename: "{app}\FleetSafetyManagerLauncher.exe"; WorkingDir: "{app}"'

@@ -37,6 +37,11 @@ dotnet publish (Join-Path $Root "backend\src\FSM.Api\FSM.Api.csproj") `
     -p:PublishSingleFile=false `
     -o $publish
 
+$applicationHost = Join-Path $publish "FSM.Api.exe"
+if (-not (Test-Path -LiteralPath $applicationHost -PathType Leaf)) {
+    throw "The self-contained application host was not published: $applicationHost"
+}
+
 foreach ($folder in @(
     "Data",
     "Data\SynchronizationTransfers",
@@ -61,6 +66,11 @@ $windowsPowerShell =
     -OutputDirectory $publish
 if ($LASTEXITCODE -ne 0) {
     throw "Desktop launcher build failed with exit code $LASTEXITCODE."
+}
+
+$launcher = Join-Path $publish "FleetSafetyManagerLauncher.exe"
+if (-not (Test-Path -LiteralPath $launcher -PathType Leaf)) {
+    throw "The desktop launcher was not created: $launcher"
 }
 
 Copy-Item (Join-Path $Root "native\scripts\install-service.ps1") $publish -Force

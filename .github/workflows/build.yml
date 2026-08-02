@@ -96,8 +96,8 @@ jobs:
             -File ".\native\scripts\build-launcher.ps1" `
             -OutputDirectory "publish"
           if ($LASTEXITCODE -ne 0 -or
-              -not (Test-Path "publish/FleetSafetyManager.exe")) {
-            throw "FleetSafetyManager.exe was not created."
+              -not (Test-Path "publish/FleetSafetyManagerLauncher.exe")) {
+            throw "FleetSafetyManagerLauncher.exe was not created."
           }
 
           $publishedBundle = Get-Content "publish/wwwroot/assets/*.js" -Raw
