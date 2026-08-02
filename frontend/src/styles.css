@@ -573,6 +573,13 @@ button:disabled {
   padding: 28px 20px 40px;
 }
 
+.dashboard-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+}
+
 .dashboard-heading h1 {
   margin: 0;
 }

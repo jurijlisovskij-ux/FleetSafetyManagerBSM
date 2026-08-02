@@ -207,6 +207,8 @@ function App() {
     useState(false);
   const [showVesselProfile, setShowVesselProfile] =
     useState(false);
+  const [showCreateVessel, setShowCreateVessel] =
+    useState(false);
   const [showUserAdministration, setShowUserAdministration] =
     useState(false);
   const [showCopyEquipment, setShowCopyEquipment] =
@@ -218,29 +220,37 @@ function App() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
+  async function refreshFleetData() {
     if (!user) return;
-    Promise.all([
-      authFetch(`${apiBaseUrl}/vessels`, user.token),
-      authFetch(`${apiBaseUrl}/dashboard`, user.token),
-    ])
-      .then(async ([vesselsResponse, dashboardResponse]) => {
-        if (!vesselsResponse.ok)
-          throw new Error("Unable to load vessels.");
-        if (!dashboardResponse.ok)
-          throw new Error("Unable to load dashboard.");
 
-        const vesselItems: Vessel[] = await vesselsResponse.json();
-        const dashboardData: DashboardData =
-          await dashboardResponse.json();
+    const [vesselsResponse, dashboardResponse] = await Promise.all([
+      authFetch(`${apiBaseUrl}/vessels`, user.token, {
+        cache: "no-store",
+      }),
+      authFetch(`${apiBaseUrl}/dashboard`, user.token, {
+        cache: "no-store",
+      }),
+    ]);
 
-        setVessels(vesselItems);
-        setDashboard(dashboardData);
+    if (!vesselsResponse.ok)
+      throw new Error("Unable to load vessels.");
+    if (!dashboardResponse.ok)
+      throw new Error("Unable to load dashboard.");
 
-        if (user.edition === "Ship" && vesselItems.length === 1) {
-          setCurrentVessel(vesselItems[0]);
-        }
-      })
+    const vesselItems: Vessel[] = await vesselsResponse.json();
+    const dashboardData: DashboardData =
+      await dashboardResponse.json();
+
+    setVessels(vesselItems);
+    setDashboard(dashboardData);
+
+    if (user.edition === "Ship" && vesselItems.length === 1) {
+      setCurrentVessel(vesselItems[0]);
+    }
+  }
+
+  useEffect(() => {
+    void refreshFleetData()
       .catch(error => setError((error as Error).message));
   }, [user]);
 
@@ -357,6 +367,7 @@ function App() {
             setShowInspectionList(false);
             setShowAddEquipment(false);
             setShowVesselProfile(false);
+            setShowCreateVessel(false);
             setShowUserAdministration(false);
             setShowCopyEquipment(false);
             setShowSynchronization(false);
@@ -371,6 +382,13 @@ function App() {
               <h1>Dashboard</h1>
               <p className="muted">Fleet equipment status.</p>
             </div>
+            {user.role === "OfficeAdmin" &&
+              <button
+                className="primary"
+                onClick={() => setShowCreateVessel(true)}
+              >
+                Add Vessel
+              </button>}
           </div>
 
           {error && <div className="error">{error}</div>}
@@ -875,6 +893,17 @@ function App() {
             setShowUserAdministration(false);
             setShowCopyEquipment(false);
             setSelectedForRequest(new Set());
+          }}
+        />}
+
+      {showCreateVessel &&
+        user.role === "OfficeAdmin" &&
+        <CreateVesselDialog
+          token={user.token}
+          onClose={() => setShowCreateVessel(false)}
+          onCreated={async () => {
+            await refreshFleetData();
+            setShowCreateVessel(false);
           }}
         />}
 
@@ -1823,6 +1852,189 @@ function UserAdministrationDialog({
               </button>
             </div>
           </section>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CreateVesselDialog({
+  token,
+  onClose,
+  onCreated,
+}: {
+  token: string;
+  onClose: () => void;
+  onCreated: (vessel: Vessel) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [draft, setDraft] = useState({
+    vesselName: "",
+    imoNumber: "",
+    flag: "",
+    companyName: "",
+    invoicingDetails: "",
+    accountingEmail: "",
+  });
+
+  async function create() {
+    if (!draft.vesselName.trim()) {
+      setError("Vessel Name is required.");
+      return;
+    }
+
+    if (!/^\d{7}$/.test(draft.imoNumber.trim())) {
+      setError("IMO Number must contain 7 digits.");
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/vessels`,
+        token,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            vesselName: draft.vesselName.trim(),
+            imoNumber: draft.imoNumber.trim(),
+            flag: draft.flag.trim() || null,
+            companyName: draft.companyName.trim() || null,
+            invoicingDetails:
+              draft.invoicingDetails.trim() || null,
+            accountingEmail:
+              draft.accountingEmail.trim() || null,
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(
+          body?.message ?? "Unable to create vessel.",
+        );
+      }
+
+      await onCreated(await response.json());
+    } catch (exception) {
+      setError((exception as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="modal">
+      <div className="vessel-profile-dialog">
+        <div className="service-request-header">
+          <div>
+            <h2>Add Vessel</h2>
+            <p>Create a vessel in the Office fleet.</p>
+          </div>
+
+          <button type="button" disabled={busy} onClick={onClose}>
+            Close
+          </button>
+        </div>
+
+        {error && <div className="error">{error}</div>}
+
+        <div className="vessel-profile-form">
+          <label>
+            Vessel Name *
+            <input
+              autoFocus
+              value={draft.vesselName}
+              onChange={event =>
+                setDraft(current => ({
+                  ...current,
+                  vesselName: event.target.value,
+                }))}
+            />
+          </label>
+
+          <label>
+            IMO Number *
+            <input
+              maxLength={7}
+              value={draft.imoNumber}
+              onChange={event =>
+                setDraft(current => ({
+                  ...current,
+                  imoNumber: event.target.value,
+                }))}
+            />
+          </label>
+
+          <label>
+            Flag
+            <input
+              value={draft.flag}
+              onChange={event =>
+                setDraft(current => ({
+                  ...current,
+                  flag: event.target.value,
+                }))}
+            />
+          </label>
+
+          <label>
+            Company Name
+            <input
+              value={draft.companyName}
+              onChange={event =>
+                setDraft(current => ({
+                  ...current,
+                  companyName: event.target.value,
+                }))}
+            />
+          </label>
+
+          <label className="wide-field">
+            Invoicing Details
+            <textarea
+              rows={5}
+              value={draft.invoicingDetails}
+              onChange={event =>
+                setDraft(current => ({
+                  ...current,
+                  invoicingDetails: event.target.value,
+                }))}
+            />
+          </label>
+
+          <label className="wide-field">
+            Accounting Email
+            <input
+              type="email"
+              value={draft.accountingEmail}
+              onChange={event =>
+                setDraft(current => ({
+                  ...current,
+                  accountingEmail: event.target.value,
+                }))}
+            />
+          </label>
+        </div>
+
+        <div className="service-request-actions">
+          <button type="button" disabled={busy} onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="primary"
+            disabled={busy}
+            onClick={create}
+          >
+            {busy ? "Creating..." : "Create Vessel"}
+          </button>
         </div>
       </div>
     </div>
