@@ -56,6 +56,10 @@ jobs:
           if ($bundle -notmatch "Synchronization completed") {
             throw "Frontend bundle does not contain the RC20 synchronization UI."
           }
+          if ($bundle -notmatch "Add Vessel" -or
+              $bundle -notmatch "Create Vessel") {
+            throw "Frontend bundle does not contain the vessel creation UI."
+          }
           if ($bundle -match "Version RC19") {
             throw "Frontend bundle still contains Version RC19."
           }
@@ -83,6 +87,12 @@ jobs:
 
           if (-not (Test-Path "publish/FSM.Api.exe")) {
             throw "FSM.Api.exe was not published."
+          }
+
+          $publishedBundle = Get-Content "publish/wwwroot/assets/*.js" -Raw
+          if ($publishedBundle -notmatch "Add Vessel" -or
+              $publishedBundle -notmatch "Create Vessel") {
+            throw "Published application is missing the vessel creation UI."
           }
 
       - name: Install Inno Setup

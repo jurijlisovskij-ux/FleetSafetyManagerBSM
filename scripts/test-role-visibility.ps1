@@ -203,6 +203,9 @@ try {
 
     $secondVesselId = [string]$secondVessel.id
 
+    Assert-True (-not [string]::IsNullOrWhiteSpace($secondVesselId)) `
+        "Vessel creation must return the persisted vessel ID."
+
     Invoke-Json `
         -Method Put `
         -Uri "$baseUrl/api/users/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" `
@@ -264,6 +267,43 @@ try {
     Assert-True (
         @($adminDashboard.upcoming | Where-Object vesselId -eq $secondVesselId).Count -eq 1) `
         "System Administrator Upcoming Inspections must include the new vessel."
+
+    Stop-FsmApi $process
+    $process = $null
+
+    $officePort = Get-FreeTcpPort
+    $office = Start-FsmApi `
+        -Edition Office `
+        -ShipVesselId "" `
+        -Port $officePort
+    $process = $office[0]
+    $baseUrl = $office[1]
+    $adminHeaders = Get-AuthorizationHeader `
+        -BaseUrl $baseUrl `
+        -Email "admin@fsm.local" `
+        -Password "Admin123!"
+    $persistedAdminVessels = @((
+        Invoke-Json -Method Get -Uri "$baseUrl/api/vessels" -Headers $adminHeaders) |
+            ForEach-Object { $_ })
+    $persistedAdminDashboard = Invoke-Json `
+        -Method Get `
+        -Uri "$baseUrl/api/dashboard" `
+        -Headers $adminHeaders
+
+    Assert-True ($persistedAdminVessels.Count -eq 2) `
+        "Both vessels must remain visible after an Office API restart."
+    Assert-True ($persistedAdminDashboard.vessels -eq 2) `
+        "The dashboard vessel count must remain two after an Office API restart."
+    Assert-True (@($persistedAdminDashboard.vesselRows).Count -eq 2) `
+        "Fleet Status must retain both vessels after an Office API restart."
+    Assert-True (
+        (Get-StatusCode `
+            -Uri "$baseUrl/api/vessels/$seedVesselId/equipment" `
+            -Headers $adminHeaders) -eq 200 -and
+        (Get-StatusCode `
+            -Uri "$baseUrl/api/vessels/$secondVesselId/equipment" `
+            -Headers $adminHeaders) -eq 200) `
+        "System Administrator must be able to open both persisted vessels."
 
     $superintendentHeaders = Get-AuthorizationHeader `
         -BaseUrl $baseUrl `
@@ -343,6 +383,7 @@ try {
 
     Write-Host "Role visibility integration tests passed."
     Write-Host "  System Administrator: all vessels and fleet totals"
+    Write-Host "  Vessel creation: persisted and visible after API restart"
     Write-Host "  Superintendent: assigned vessel only"
     Write-Host "  Ship Crew: configured local vessel only"
     Write-Host "  Unauthorized vessel IDs: HTTP 403"
