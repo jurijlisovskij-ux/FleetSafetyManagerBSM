@@ -24,6 +24,7 @@ public sealed record EquipmentSynchronizationItem(
     int Quantity,
     InspectionBy InspectionBy,
     DateOnly? ExpiryDate,
+    string? Responsible,
     string? Remarks,
     string? CurrentReportPath,
     string? CurrentReportFileName,

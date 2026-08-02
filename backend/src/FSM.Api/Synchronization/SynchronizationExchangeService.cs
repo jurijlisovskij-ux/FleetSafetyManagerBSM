@@ -62,6 +62,7 @@ public sealed class SynchronizationExchangeService(
                 x.Quantity,
                 x.InspectionBy,
                 x.ExpiryDate,
+                x.Responsible,
                 x.Remarks,
                 x.CurrentReportPath,
                 x.CurrentReportFileName,
@@ -239,6 +240,7 @@ public sealed class SynchronizationExchangeService(
             existing.Quantity = incoming.Quantity;
             existing.InspectionBy = incoming.InspectionBy;
             existing.ExpiryDate = incoming.ExpiryDate;
+            existing.Responsible = incoming.Responsible;
             existing.Remarks = incoming.Remarks;
             existing.CurrentReportPath = incoming.CurrentReportPath;
             existing.CurrentReportFileName = incoming.CurrentReportFileName;

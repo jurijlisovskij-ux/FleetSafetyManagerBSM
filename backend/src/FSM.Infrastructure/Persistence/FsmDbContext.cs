@@ -62,6 +62,7 @@ public sealed class FsmDbContext(DbContextOptions<FsmDbContext> options)
             entity.Property(x => x.Maker).HasMaxLength(180);
             entity.Property(x => x.Model).HasMaxLength(180);
             entity.Property(x => x.SerialNumber).HasMaxLength(180);
+            entity.Property(x => x.Responsible).HasMaxLength(180);
             entity.Property(x => x.Category).HasConversion<string>();
             entity.Property(x => x.InspectionBy).HasConversion<string>();
             entity.HasOne(x => x.Vessel)

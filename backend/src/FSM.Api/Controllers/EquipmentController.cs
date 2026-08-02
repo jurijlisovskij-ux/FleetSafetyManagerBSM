@@ -5,6 +5,7 @@ using FSM.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Globalization;
 
 namespace FSM.Api.Controllers;
 
@@ -16,7 +17,8 @@ public sealed record SaveEquipmentRequest(
     string? SerialNumber,
     int Quantity,
     InspectionBy InspectionBy,
-    DateOnly? ExpiryDate,
+    string? ExpiryDate,
+    string? Responsible,
     string? Remarks);
 
 [ApiController]
@@ -84,8 +86,8 @@ public sealed class EquipmentController(
             Quantity = request.Quantity,
             InspectionBy =
                 request.InspectionBy,
-            ExpiryDate =
-                request.ExpiryDate,
+            ExpiryDate = ParseExpiryDate(request.ExpiryDate),
+            Responsible = Clean(request.Responsible),
             Remarks =
                 request.Remarks?.Trim()
         };
@@ -129,7 +131,8 @@ public sealed class EquipmentController(
         item.SerialNumber = Clean(request.SerialNumber);
         item.Quantity = request.Quantity;
         item.InspectionBy = request.InspectionBy;
-        item.ExpiryDate = request.ExpiryDate;
+        item.ExpiryDate = ParseExpiryDate(request.ExpiryDate);
+        item.Responsible = Clean(request.Responsible);
         item.Remarks = request.Remarks?.Trim();
 
         await db.SaveChangesAsync(cancellationToken);
@@ -181,8 +184,21 @@ public sealed class EquipmentController(
             return "Equipment Name is required.";
         if (request.Quantity < 1)
             return "Quantity must be greater than zero.";
+        if (!string.IsNullOrWhiteSpace(request.ExpiryDate) &&
+            ParseExpiryDate(request.ExpiryDate) is null)
+            return "Enter a valid Expiry Date.";
         return null;
     }
+
+    private static DateOnly? ParseExpiryDate(string? value) =>
+        DateOnly.TryParseExact(
+            value,
+            "yyyy-MM-dd",
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.None,
+            out var date)
+                ? date
+                : null;
 
     private static string? Clean(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
@@ -203,6 +219,7 @@ public sealed class EquipmentController(
             ? "Service Company"
             : "Crew",
         x.ExpiryDate,
+        x.Responsible,
         Status = x.CalculateStatus(today, 60).ToString(),
         x.Remarks,
         ReportAvailable =

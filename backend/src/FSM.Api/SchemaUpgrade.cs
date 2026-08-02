@@ -20,6 +20,8 @@ public static class SchemaUpgrade
             await AddColumnIfMissingAsync(
                 db, "equipment", "CurrentCertificateFileName", "TEXT");
             await AddColumnIfMissingAsync(
+                db, "equipment", "Responsible", "TEXT");
+            await AddColumnIfMissingAsync(
                 db, "vessels", "CompanyName", "TEXT");
             await AddColumnIfMissingAsync(
                 db, "vessels", "InvoicingDetails", "TEXT");

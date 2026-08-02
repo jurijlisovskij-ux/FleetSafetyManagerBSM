@@ -54,6 +54,7 @@ type Equipment = {
   quantity: number;
   inspectionBy: InspectionBy;
   expiryDate?: string;
+  responsible?: string;
   status: "OK" | "Soon" | "Overdue";
   remarks?: string;
   reportAvailable: boolean;
@@ -154,6 +155,15 @@ function formatDate(value?: string) {
     month: "short",
     year: "numeric",
   }).format(new Date(`${value}T00:00:00`));
+}
+
+function isValidDateInput(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day;
 }
 
 function formatSynchronizationDateTime(value?: string) {
@@ -735,6 +745,8 @@ function App() {
                         current.map(item => item.id === saved.id ? saved : item),
                       );
                       setSelected(saved);
+                      void refreshFleetData()
+                        .catch(error => setError((error as Error).message));
                     }}
                     onDeleted={id => {
                       setEquipment(current => current.filter(item => item.id !== id));
@@ -3100,58 +3112,18 @@ function EquipmentDetails({
   onDocumentsChanged: () => Promise<void>;
 }) {
   const [draft, setDraft] = useState(item);
-  const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   const update = <K extends keyof Equipment>(key: K, value: Equipment[K]) =>
     setDraft(current => ({ ...current, [key]: value }));
 
-  if (!editing) {
-    return (
-      <>
-        <div className="details-header">
-          <h2>{item.equipmentName}</h2>
-          <button className="primary" onClick={() => setEditing(true)}>Edit</button>
-        </div>
-        <div className="details-grid">
-          <Detail label="Category" value={item.category} />
-          <Detail label="Maker" value={item.maker || "—"} />
-          <Detail label="Model" value={item.model || "—"} />
-          <Detail label="Serial Number" value={item.serialNumber || "—"} />
-          <Detail label="Quantity" value={String(item.quantity)} />
-          <Detail label="Inspection By" value={item.inspectionBy} />
-          <Detail label="Expiry Date" value={formatDate(item.expiryDate)} />
-          <Detail label="Status" value={item.status} />
-        </div>
-        <div className="remarks">
-          <span>Remarks</span>
-          <p>{item.remarks || "—"}</p>
-        </div>
-
-        <section className="documents-section">
-          <h3>Reports & Certificates</h3>
-          <DocumentControl
-            token={token}
-            equipmentId={item.id}
-            type="report"
-            available={item.reportAvailable}
-            fileName={item.reportFileName}
-            onChanged={onDocumentsChanged}
-          />
-          <DocumentControl
-            token={token}
-            equipmentId={item.id}
-            type="certificate"
-            available={item.certificateAvailable}
-            fileName={item.certificateFileName}
-            onChanged={onDocumentsChanged}
-          />
-        </section>
-
-      </>
-    );
-  }
+  const hasChanges =
+    draft.expiryDate !== item.expiryDate ||
+    draft.inspectionBy !== item.inspectionBy ||
+    draft.quantity !== item.quantity ||
+    (draft.responsible || "") !== (item.responsible || "") ||
+    (draft.remarks || "") !== (item.remarks || "");
 
   return (
     <form
@@ -3163,6 +3135,10 @@ function EquipmentDetails({
         }
         if (draft.quantity < 1) {
           setError("Quantity must be greater than zero.");
+          return;
+        }
+        if (draft.expiryDate && !isValidDateInput(draft.expiryDate)) {
+          setError("Enter a valid Expiry Date.");
           return;
         }
 
@@ -3184,6 +3160,7 @@ function EquipmentDetails({
                 quantity: draft.quantity,
                 inspectionBy: inspectionToApi(draft.inspectionBy),
                 expiryDate: draft.expiryDate || null,
+                responsible: draft.responsible?.trim() || null,
                 remarks: draft.remarks || null,
               }),
             },
@@ -3197,7 +3174,6 @@ function EquipmentDetails({
           const saved: Equipment = await response.json();
           onSaved(saved);
           setDraft(saved);
-          setEditing(false);
         } catch (exception) {
           setError((exception as Error).message);
         } finally {
@@ -3216,6 +3192,7 @@ function EquipmentDetails({
           Category *
           <select
             value={draft.category}
+            disabled
             onChange={event => update("category", event.target.value as Equipment["category"])}
           >
             {categories.map(category => <option key={category}>{category}</option>)}
@@ -3226,6 +3203,7 @@ function EquipmentDetails({
           Equipment *
           <input
             value={draft.equipmentName}
+            disabled
             onChange={event => update("equipmentName", event.target.value)}
           />
         </label>
@@ -3234,6 +3212,7 @@ function EquipmentDetails({
           Maker
           <input
             value={draft.maker || ""}
+            disabled
             onChange={event => update("maker", event.target.value)}
           />
         </label>
@@ -3242,6 +3221,7 @@ function EquipmentDetails({
           Model
           <input
             value={draft.model || ""}
+            disabled
             onChange={event => update("model", event.target.value)}
           />
         </label>
@@ -3250,6 +3230,7 @@ function EquipmentDetails({
           Serial Number
           <input
             value={draft.serialNumber || ""}
+            disabled
             onChange={event => update("serialNumber", event.target.value)}
           />
         </label>
@@ -3284,6 +3265,14 @@ function EquipmentDetails({
           />
         </label>
 
+        <label>
+          Responsible
+          <input
+            value={draft.responsible || ""}
+            onChange={event => update("responsible", event.target.value)}
+          />
+        </label>
+
         <label className="wide-field">
           Remarks
           <textarea
@@ -3293,6 +3282,26 @@ function EquipmentDetails({
           />
         </label>
       </div>
+
+      <section className="documents-section">
+        <h3>Reports & Certificates</h3>
+        <DocumentControl
+          token={token}
+          equipmentId={item.id}
+          type="report"
+          available={item.reportAvailable}
+          fileName={item.reportFileName}
+          onChanged={onDocumentsChanged}
+        />
+        <DocumentControl
+          token={token}
+          equipmentId={item.id}
+          type="certificate"
+          available={item.certificateAvailable}
+          fileName={item.certificateFileName}
+          onChanged={onDocumentsChanged}
+        />
+      </section>
 
       <div className="details-actions">
         <button
@@ -3320,18 +3329,7 @@ function EquipmentDetails({
         >
           Delete
         </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => {
-            setDraft(item);
-            setEditing(false);
-            setError("");
-          }}
-        >
-          Cancel
-        </button>
-        <button className="primary" type="submit" disabled={busy}>
+        <button className="primary" type="submit" disabled={busy || !hasChanges}>
           {busy ? "Saving..." : "Save"}
         </button>
       </div>

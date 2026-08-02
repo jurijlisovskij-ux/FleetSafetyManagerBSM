@@ -15,6 +15,7 @@ public sealed class Equipment : ISynchronizableEntity
     public int Quantity { get; set; } = 1;
     public InspectionBy InspectionBy { get; set; }
     public DateOnly? ExpiryDate { get; set; }
+    public string? Responsible { get; set; }
     public string? Remarks { get; set; }
     public string? CurrentReportPath { get; set; }
     public string? CurrentReportFileName { get; set; }
