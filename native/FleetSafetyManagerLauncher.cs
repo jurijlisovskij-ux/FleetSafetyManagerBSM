@@ -71,7 +71,10 @@ internal static class Program
     {
         string currentPath = Path.Combine(installDirectory, "current.txt");
         if (!File.Exists(currentPath))
-            File.WriteAllText(currentPath, "." + Environment.NewLine, Encoding.UTF8);
+        {
+            string discoveredRelease = FindLatestRelease(installDirectory);
+            File.WriteAllText(currentPath, discoveredRelease + Environment.NewLine, Encoding.UTF8);
+        }
 
         string configuredPath = File.ReadAllText(currentPath).Trim();
         if (configuredPath.Length == 0)
@@ -85,6 +88,21 @@ internal static class Program
             throw new DirectoryNotFoundException("current.txt points to a directory that does not exist: " + resolvedPath);
 
         return resolvedPath;
+    }
+
+    private static string FindLatestRelease(string installDirectory)
+    {
+        string releasesDirectory = Path.Combine(installDirectory, "Releases");
+        if (!Directory.Exists(releasesDirectory))
+            throw new DirectoryNotFoundException("Cannot recreate current.txt because the Releases directory is missing: " + releasesDirectory);
+
+        string[] releases = Directory.GetDirectories(releasesDirectory, "RC20_*");
+        if (releases.Length == 0)
+            throw new DirectoryNotFoundException("Cannot recreate current.txt because no RC20 release exists in: " + releasesDirectory);
+
+        Array.Sort(releases, StringComparer.OrdinalIgnoreCase);
+        string selected = releases[releases.Length - 1];
+        return Path.Combine("Releases", Path.GetFileName(selected));
     }
 
     private static string ResolveEdition(string installDirectory, string applicationDirectory)

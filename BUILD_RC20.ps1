@@ -25,15 +25,16 @@ if (-not $iscc) {
 }
 
 $installerScript = Join-Path $Root "installer\FleetSafetyManager.iss"
+$buildId = Get-Date -Format "yyyyMMddHHmmss"
 
 Write-Host "Building Office installer..."
-& $iscc "/DMyEdition=Office" "/DOutputBase=FleetSafetyManager_RC20_Office_Setup" $installerScript
+& $iscc "/DMyEdition=Office" "/DMyBuild=$buildId" "/DOutputBase=FleetSafetyManager_RC20_Office_Setup" $installerScript
 if ($LASTEXITCODE -ne 0) {
     throw "Office installer build failed with exit code $LASTEXITCODE."
 }
 
 Write-Host "Building Ship installer..."
-& $iscc "/DMyEdition=Ship" "/DOutputBase=FleetSafetyManager_RC20_Ship_Setup" $installerScript
+& $iscc "/DMyEdition=Ship" "/DMyBuild=$buildId" "/DOutputBase=FleetSafetyManager_RC20_Ship_Setup" $installerScript
 if ($LASTEXITCODE -ne 0) {
     throw "Ship installer build failed with exit code $LASTEXITCODE."
 }
