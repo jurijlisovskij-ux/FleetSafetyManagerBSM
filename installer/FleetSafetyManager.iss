@@ -32,11 +32,17 @@ RestartApplications=no
 ChangesAssociations=no
 DisableProgramGroupPage=yes
 UninstallDisplayName={#AppName} {#MyEdition}
+UninstallDisplayIcon={app}\FleetSafetyManager.ico
+SetupIconFile=FleetSafetyManager.ico
+
+[Tasks]
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
 
 [Files]
 Source: "..\publish\*"; DestDir: "{app}"; Excludes: "appsettings.json;Data\*;Documents\*;Backups\*;Logs\*"; Flags: ignoreversion recursesubdirs createallsubdirs restartreplace
 Source: "..\publish\appsettings.json"; DestDir: "{app}"; Flags: onlyifdoesntexist
 Source: "FleetSafetyManagerLauncher.vbs"; DestDir: "{app}"; Flags: ignoreversion
+Source: "FleetSafetyManager.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Dirs]
 Name: "{app}\Data"; Flags: uninsneveruninstall
@@ -48,10 +54,13 @@ Name: "{app}\Backups"; Flags: uninsneveruninstall
 Name: "{app}\Logs"; Flags: uninsneveruninstall
 
 [Icons]
-Name: "{autodesktop}\Fleet Safety Manager RC20"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\FleetSafetyManagerLauncher.vbs"""; WorkingDir: "{app}"; Comment: "Open Fleet Safety Manager RC20"
+Name: "{autodesktop}\Fleet Safety Manager {#MyEdition}"; Filename: "{app}\FleetSafetyManager.exe"; WorkingDir: "{app}"; IconFilename: "{app}\FleetSafetyManager.ico"; Comment: "Open Fleet Safety Manager {#MyEdition}"; Tasks: desktopicon
 Name: "{group}\Fleet Safety Manager RC20"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\FleetSafetyManagerLauncher.vbs"""; WorkingDir: "{app}"; Comment: "Open Fleet Safety Manager RC20"
 Name: "{group}\Fleet Safety Manager Data"; Filename: "{app}"
 Name: "{group}\Uninstall Fleet Safety Manager"; Filename: "{uninstallexe}"
+
+[InstallDelete]
+Type: files; Name: "{autodesktop}\Fleet Safety Manager RC20.lnk"
 
 [Run]
 Filename: "{sys}\wscript.exe"; Parameters: """{app}\FleetSafetyManagerLauncher.vbs"""; Description: "Open Fleet Safety Manager RC20"; Flags: postinstall nowait skipifsilent

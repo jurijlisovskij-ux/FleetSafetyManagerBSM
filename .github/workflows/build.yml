@@ -89,6 +89,17 @@ jobs:
             throw "FSM.Api.exe was not published."
           }
 
+          & "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" `
+            -NoProfile `
+            -NonInteractive `
+            -ExecutionPolicy Bypass `
+            -File ".\native\scripts\build-launcher.ps1" `
+            -OutputDirectory "publish"
+          if ($LASTEXITCODE -ne 0 -or
+              -not (Test-Path "publish/FleetSafetyManager.exe")) {
+            throw "FleetSafetyManager.exe was not created."
+          }
+
           $publishedBundle = Get-Content "publish/wwwroot/assets/*.js" -Raw
           if ($publishedBundle -notmatch "Add Vessel" -or
               $publishedBundle -notmatch "Create Vessel") {

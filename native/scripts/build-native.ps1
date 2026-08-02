@@ -50,6 +50,19 @@ foreach ($folder in @(
     New-Item -ItemType Directory -Force -Path (Join-Path $publish $folder) | Out-Null
 }
 
+Write-Host "Building desktop launcher..."
+$windowsPowerShell =
+    Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+& $windowsPowerShell `
+    -NoProfile `
+    -NonInteractive `
+    -ExecutionPolicy Bypass `
+    -File (Join-Path $Root "native\scripts\build-launcher.ps1") `
+    -OutputDirectory $publish
+if ($LASTEXITCODE -ne 0) {
+    throw "Desktop launcher build failed with exit code $LASTEXITCODE."
+}
+
 Copy-Item (Join-Path $Root "native\scripts\install-service.ps1") $publish -Force
 Copy-Item (Join-Path $Root "native\scripts\uninstall-service.ps1") $publish -Force
 Copy-Item (Join-Path $Root "native\scripts\backup-native.ps1") $publish -Force
