@@ -41,8 +41,8 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 [Files]
 Source: "..\publish\*"; DestDir: "{app}"; Excludes: "appsettings.json;Data\*;Documents\*;Backups\*;Logs\*"; Flags: ignoreversion recursesubdirs createallsubdirs restartreplace
 Source: "..\publish\appsettings.json"; DestDir: "{app}"; Flags: onlyifdoesntexist
-Source: "FleetSafetyManagerLauncher.vbs"; DestDir: "{app}"; Flags: ignoreversion
 Source: "FleetSafetyManager.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "Launch Fleet Safety Manager.cmd"; DestDir: "{app}"; Flags: ignoreversion
 
 [Dirs]
 Name: "{app}\Data"; Flags: uninsneveruninstall
@@ -54,8 +54,8 @@ Name: "{app}\Backups"; Flags: uninsneveruninstall
 Name: "{app}\Logs"; Flags: uninsneveruninstall
 
 [Icons]
-Name: "{autodesktop}\Fleet Safety Manager {#MyEdition}"; Filename: "{app}\FleetSafetyManager.exe"; WorkingDir: "{app}"; IconFilename: "{app}\FleetSafetyManager.ico"; Comment: "Open Fleet Safety Manager {#MyEdition}"; Tasks: desktopicon
-Name: "{group}\Fleet Safety Manager RC20"; Filename: "{sys}\wscript.exe"; Parameters: """{app}\FleetSafetyManagerLauncher.vbs"""; WorkingDir: "{app}"; Comment: "Open Fleet Safety Manager RC20"
+Name: "{autodesktop}\Fleet Safety Manager {#MyEdition}"; Filename: "{app}\FleetSafetyManagerLauncher.exe"; WorkingDir: "{app}"; IconFilename: "{app}\FleetSafetyManager.ico"; Comment: "Open Fleet Safety Manager {#MyEdition}"; Tasks: desktopicon
+Name: "{group}\Fleet Safety Manager {#MyEdition}"; Filename: "{app}\FleetSafetyManagerLauncher.exe"; WorkingDir: "{app}"; IconFilename: "{app}\FleetSafetyManager.ico"; Comment: "Open Fleet Safety Manager {#MyEdition}"
 Name: "{group}\Fleet Safety Manager Data"; Filename: "{app}"
 Name: "{group}\Uninstall Fleet Safety Manager"; Filename: "{uninstallexe}"
 
@@ -63,7 +63,7 @@ Name: "{group}\Uninstall Fleet Safety Manager"; Filename: "{uninstallexe}"
 Type: files; Name: "{autodesktop}\Fleet Safety Manager RC20.lnk"
 
 [Run]
-Filename: "{sys}\wscript.exe"; Parameters: """{app}\FleetSafetyManagerLauncher.vbs"""; Description: "Open Fleet Safety Manager RC20"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\FleetSafetyManagerLauncher.exe"; WorkingDir: "{app}"; Description: "Open Fleet Safety Manager {#MyEdition}"; Flags: postinstall nowait skipifsilent
 
 [UninstallRun]
 Filename: "{cmd}"; Parameters: "/C sc stop {#ServiceName}"; Flags: runhidden waituntilterminated; RunOnceId: "StopService"
@@ -112,6 +112,8 @@ begin
     StringChangeEx(UpdatedConfigText, '"Edition": "Ship"', '"Edition": "{#MyEdition}"', True);
     SaveStringToFile(ConfigPath, AnsiString(UpdatedConfigText), False);
   end;
+  SaveStringToFile(ExpandConstant('{app}\current.txt'), '.', False);
+  SaveStringToFile(ExpandConstant('{app}\edition.txt'), '{#MyEdition}', False);
 end;
 
 procedure InstallOrUpdateService;

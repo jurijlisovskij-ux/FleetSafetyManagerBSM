@@ -32,7 +32,7 @@ New-Item `
     -Force | Out-Null
 
 $launcherPath =
-    Join-Path $resolvedOutputDirectory "FleetSafetyManager.exe"
+    Join-Path $resolvedOutputDirectory "FleetSafetyManagerLauncher.exe"
 
 if (Test-Path -LiteralPath $launcherPath) {
     Remove-Item -LiteralPath $launcherPath -Force
@@ -61,7 +61,7 @@ if ($compilation.Errors.HasErrors) {
 }
 
 if (-not (Test-Path -LiteralPath $launcherPath)) {
-    throw "FleetSafetyManager.exe was not created."
+    throw "FleetSafetyManagerLauncher.exe was not created."
 }
 
 Write-Host "Desktop launcher created: $launcherPath"
