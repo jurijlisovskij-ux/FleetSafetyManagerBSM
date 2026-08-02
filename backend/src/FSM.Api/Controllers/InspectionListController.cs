@@ -1,5 +1,5 @@
 using System.IO.Compression;
-using System.Security.Claims;
+using FSM.Api.Authorization;
 using FSM.Api.Services;
 using FSM.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
@@ -20,7 +20,8 @@ public sealed record GenerateInspectionListRequest(
 public sealed class InspectionListController(
     FsmDbContext db,
     InspectionListService inspectionListService,
-    DocumentStorageService storage) : ControllerBase
+    DocumentStorageService storage,
+    VesselAccessService vesselAccess) : ControllerBase
 {
     [HttpPost]
     public async Task<IActionResult> Generate(
@@ -52,7 +53,8 @@ public sealed class InspectionListController(
             });
         }
 
-        if (!await CanAccessVesselAsync(
+        if (!await vesselAccess.CanAccessVesselAsync(
+            User,
             request.VesselId,
             cancellationToken))
         {
@@ -218,37 +220,4 @@ public sealed class InspectionListController(
         input.CopyTo(output);
     }
 
-    private async Task<bool> CanAccessVesselAsync(
-        Guid vesselId,
-        CancellationToken cancellationToken)
-    {
-        var role =
-            User.FindFirstValue(ClaimTypes.Role);
-
-        if (string.Equals(
-            role,
-            "OfficeAdmin",
-            StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        var userIdText =
-            User.FindFirstValue(
-                ClaimTypes.NameIdentifier);
-
-        if (!Guid.TryParse(
-            userIdText,
-            out var userId))
-        {
-            return false;
-        }
-
-        return await db.UserVessels
-            .AsNoTracking()
-            .AnyAsync(
-                x => x.UserId == userId &&
-                     x.VesselId == vesselId,
-                cancellationToken);
-    }
 }

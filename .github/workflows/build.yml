@@ -36,6 +36,10 @@ jobs:
         with:
           dotnet-version: "9.0.x"
 
+      - name: Test backend role visibility
+        shell: pwsh
+        run: ./scripts/test-role-visibility.ps1
+
       - name: Build frontend
         shell: pwsh
         run: |

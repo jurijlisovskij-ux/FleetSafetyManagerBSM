@@ -1,4 +1,4 @@
-using System.Security.Claims;
+using FSM.Api.Authorization;
 using FSM.Domain.Entities;
 using FSM.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
@@ -18,34 +18,22 @@ public sealed record SaveVesselRequest(
 [ApiController]
 [Authorize]
 [Route("api/vessels")]
-public sealed class VesselsController(FsmDbContext db) : ControllerBase
+public sealed class VesselsController(
+    FsmDbContext db,
+    VesselAccessService vesselAccess) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> GetAssigned(
         CancellationToken cancellationToken)
     {
-        var userIdValue =
-            User.FindFirstValue(ClaimTypes.NameIdentifier);
-        var role =
-            User.FindFirstValue(ClaimTypes.Role);
-
-        if (!Guid.TryParse(userIdValue, out var userId))
+        var vesselIds = await vesselAccess.GetAccessibleVesselIdsAsync(
+            User,
+            cancellationToken);
+        if (vesselIds is null)
             return Unauthorized();
 
-        var query = db.Vessels.AsNoTracking();
-
-        if (!string.Equals(
-            role,
-            "OfficeAdmin",
-            StringComparison.Ordinal))
-        {
-            query = query.Where(vessel =>
-                db.UserVessels.Any(assignment =>
-                    assignment.UserId == userId &&
-                    assignment.VesselId == vessel.Id));
-        }
-
-        var vessels = await query
+        var vessels = await db.Vessels.AsNoTracking()
+            .Where(x => vesselIds.Contains(x.Id))
             .OrderBy(x => x.VesselName)
             .Select(x => new
             {

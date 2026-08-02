@@ -1,6 +1,7 @@
 using System.Security.Claims;
 using System.Text;
 using FSM.Api;
+using FSM.Api.Authorization;
 using FSM.Api.Auth;
 using FSM.Api.Services;
 using FSM.Api.Synchronization;
@@ -59,6 +60,7 @@ builder.Services.AddScoped<SynchronizationFileService>();
 builder.Services.AddScoped<SynchronizationExchangeService>();
 builder.Services.AddScoped<SynchronizationStatusService>();
 builder.Services.AddScoped<SynchronizationClient>();
+builder.Services.AddScoped<VesselAccessService>();
 builder.Services.AddHostedService<SynchronizationWorker>();
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {

@@ -1,5 +1,5 @@
 using System.Diagnostics;
-using System.Security.Claims;
+using FSM.Api.Authorization;
 using FSM.Api.Synchronization;
 using FSM.Domain.Entities;
 using FSM.Infrastructure.Persistence;
@@ -19,6 +19,7 @@ public sealed class SynchronizationController(
     SynchronizationClient client,
     SynchronizationExchangeService exchange,
     SynchronizationFileService files,
+    VesselAccessService vesselAccess,
     IOptions<SynchronizationOptions> options,
     IConfiguration configuration) : ControllerBase
 {
@@ -31,7 +32,9 @@ public sealed class SynchronizationController(
     public async Task<IActionResult> GetStatus(
         CancellationToken cancellationToken)
     {
-        var vesselIds = await GetAccessibleVesselIdsAsync(cancellationToken);
+        var vesselIds = await vesselAccess.GetAccessibleVesselIdsAsync(
+            User,
+            cancellationToken);
         if (vesselIds is null)
             return Unauthorized();
         return Ok(new
@@ -48,7 +51,9 @@ public sealed class SynchronizationController(
         Guid? vesselId,
         CancellationToken cancellationToken)
     {
-        var vesselIds = await GetAccessibleVesselIdsAsync(cancellationToken);
+        var vesselIds = await vesselAccess.GetAccessibleVesselIdsAsync(
+            User,
+            cancellationToken);
         if (vesselIds is null)
             return Unauthorized();
         if (vesselId.HasValue && !vesselIds.Contains(vesselId.Value))
@@ -88,7 +93,10 @@ public sealed class SynchronizationController(
         Guid vesselId,
         CancellationToken cancellationToken)
     {
-        if (!await CanAccessVesselAsync(vesselId, cancellationToken))
+        if (!await vesselAccess.CanAccessVesselAsync(
+            User,
+            vesselId,
+            cancellationToken))
             return Forbid();
 
         try
@@ -476,29 +484,4 @@ public sealed class SynchronizationController(
         return vesselExists ? null : NotFound();
     }
 
-    private async Task<IReadOnlyList<Guid>?> GetAccessibleVesselIdsAsync(
-        CancellationToken cancellationToken)
-    {
-        var userIdText = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        var role = User.FindFirstValue(ClaimTypes.Role);
-        if (!Guid.TryParse(userIdText, out var userId))
-            return null;
-        var query = db.Vessels.AsNoTracking();
-        if (!string.Equals(role, "OfficeAdmin", StringComparison.Ordinal))
-        {
-            query = query.Where(vessel =>
-                db.UserVessels.Any(assignment =>
-                    assignment.UserId == userId &&
-                    assignment.VesselId == vessel.Id));
-        }
-        return await query.Select(x => x.Id).ToListAsync(cancellationToken);
-    }
-
-    private async Task<bool> CanAccessVesselAsync(
-        Guid vesselId,
-        CancellationToken cancellationToken)
-    {
-        var vesselIds = await GetAccessibleVesselIdsAsync(cancellationToken);
-        return vesselIds?.Contains(vesselId) == true;
-    }
 }

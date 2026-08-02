@@ -1,4 +1,4 @@
-using System.Security.Claims;
+using FSM.Api.Authorization;
 using FSM.Api.Synchronization;
 using FSM.Domain.Enums;
 using FSM.Infrastructure.Persistence;
@@ -13,32 +13,23 @@ namespace FSM.Api.Controllers;
 [Route("api/dashboard")]
 public sealed class DashboardController(
     FsmDbContext db,
-    SynchronizationStatusService synchronizationStatuses) : ControllerBase
+    SynchronizationStatusService synchronizationStatuses,
+    VesselAccessService vesselAccess) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> Get(CancellationToken cancellationToken)
     {
-        var userIdText = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        var role = User.FindFirstValue(ClaimTypes.Role);
-
-        if (!Guid.TryParse(userIdText, out var userId))
+        var vesselIds = await vesselAccess.GetAccessibleVesselIdsAsync(
+            User,
+            cancellationToken);
+        if (vesselIds is null)
             return Unauthorized();
 
-        var vesselQuery = db.Vessels.AsNoTracking();
-
-        if (!string.Equals(role, "OfficeAdmin", StringComparison.Ordinal))
-        {
-            vesselQuery = vesselQuery.Where(vessel =>
-                db.UserVessels.Any(assignment =>
-                    assignment.UserId == userId &&
-                    assignment.VesselId == vessel.Id));
-        }
-
-        var vessels = await vesselQuery
+        var vessels = await db.Vessels.AsNoTracking()
+            .Where(x => vesselIds.Contains(x.Id))
             .OrderBy(x => x.VesselName)
             .ToListAsync(cancellationToken);
 
-        var vesselIds = vessels.Select(x => x.Id).ToList();
         var synchronization = await synchronizationStatuses.GetAsync(
             vesselIds,
             cancellationToken);

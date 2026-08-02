@@ -1,4 +1,4 @@
-using System.Security.Claims;
+using FSM.Api.Authorization;
 using FSM.Domain.Entities;
 using FSM.Domain.Enums;
 using FSM.Infrastructure.Persistence;
@@ -22,7 +22,9 @@ public sealed record SaveEquipmentRequest(
 [ApiController]
 [Authorize]
 [Route("api/vessels/{vesselId:guid}/equipment")]
-public sealed class EquipmentController(FsmDbContext db) : ControllerBase
+public sealed class EquipmentController(
+    FsmDbContext db,
+    VesselAccessService vesselAccess) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> GetByVessel(
@@ -160,26 +162,17 @@ public sealed class EquipmentController(FsmDbContext db) : ControllerBase
         Guid vesselId,
         CancellationToken cancellationToken)
     {
-        var userIdText = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        var role = User.FindFirstValue(ClaimTypes.Role);
-
-        if (!Guid.TryParse(userIdText, out var userId))
-            return Unauthorized();
-
         var vesselExists = await db.Vessels.AsNoTracking()
             .AnyAsync(x => x.Id == vesselId, cancellationToken);
 
         if (!vesselExists) return NotFound();
 
-        if (string.Equals(role, "OfficeAdmin", StringComparison.Ordinal))
-            return null;
-
-        var assigned = await db.UserVessels.AsNoTracking()
-            .AnyAsync(
-                x => x.UserId == userId && x.VesselId == vesselId,
-                cancellationToken);
-
-        return assigned ? null : Forbid();
+        return await vesselAccess.CanAccessVesselAsync(
+            User,
+            vesselId,
+            cancellationToken)
+                ? null
+                : Forbid();
     }
 
     private static string? Validate(SaveEquipmentRequest request)
