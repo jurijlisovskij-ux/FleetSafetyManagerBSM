@@ -171,10 +171,9 @@ public sealed class SynchronizationExchangeService(
                 .IgnoreQueryFilters()
                 .SingleOrDefaultAsync(x => x.Id == incoming.Id, cancellationToken);
             if (!ShouldApply(
-                existing?.LastModifiedUtc,
-                incoming.LastModifiedUtc,
-                sourceRemoteCursorUtc,
+                existing is not null,
                 sourceEdition,
+                "Office",
                 "vessel",
                 incoming.Id,
                 warnings,
@@ -211,10 +210,9 @@ public sealed class SynchronizationExchangeService(
                 incoming,
                 cancellationToken);
             if (!ShouldApply(
-                existing?.LastModifiedUtc,
-                incoming.LastModifiedUtc,
-                sourceRemoteCursorUtc,
+                existing is not null,
                 sourceEdition,
+                "Ship",
                 "equipment",
                 incoming.Id,
                 warnings,
@@ -268,10 +266,9 @@ public sealed class SynchronizationExchangeService(
                 .IgnoreQueryFilters()
                 .SingleOrDefaultAsync(x => x.Id == incoming.Id, cancellationToken);
             if (!ShouldApply(
-                existing?.LastModifiedUtc,
-                incoming.LastModifiedUtc,
-                sourceRemoteCursorUtc,
+                existing is not null,
                 sourceEdition,
+                "Office",
                 "user",
                 incoming.Id,
                 warnings,
@@ -308,10 +305,9 @@ public sealed class SynchronizationExchangeService(
                          x.VesselId == incoming.VesselId,
                     cancellationToken);
             if (!ShouldApply(
-                existing?.LastModifiedUtc,
-                incoming.LastModifiedUtc,
-                sourceRemoteCursorUtc,
+                existing is not null,
                 sourceEdition,
+                "Office",
                 "user assignment",
                 incoming.UserId,
                 warnings,
@@ -340,8 +336,6 @@ public sealed class SynchronizationExchangeService(
             {
                 var setting = await db.SynchronizationSettings
                     .SingleAsync(x => x.VesselId == vesselId, cancellationToken);
-                if (incoming.LastModifiedUtc <= setting.LastModifiedUtc)
-                    continue;
                 setting.AutomaticIntervalHours =
                     SynchronizationTokenService.NormalizeInterval(
                         incoming.AutomaticIntervalHours);
@@ -379,36 +373,29 @@ public sealed class SynchronizationExchangeService(
     }
 
     private bool ShouldApply(
-        DateTime? existingModifiedUtc,
-        DateTime incomingModifiedUtc,
-        DateTime sourceRemoteCursorUtc,
+        bool recordExists,
         string sourceEdition,
+        string authoritativeEdition,
         string entityName,
         Guid entityId,
         List<string> warnings,
         ref int conflicts)
     {
-        incomingModifiedUtc = EnsureUtc(incomingModifiedUtc);
-        if (existingModifiedUtc is null)
+        if (!recordExists)
             return true;
 
-        var existingUtc = EnsureUtc(existingModifiedUtc.Value);
-        if (existingUtc == incomingModifiedUtc)
-            return false;
-
-        var officeConflict =
-            localEdition.Equals("Office", StringComparison.OrdinalIgnoreCase) &&
-            sourceEdition.Equals("Ship", StringComparison.OrdinalIgnoreCase) &&
-            existingUtc > EnsureUtc(sourceRemoteCursorUtc);
-        if (officeConflict || existingUtc > incomingModifiedUtc)
+        if (sourceEdition.Equals(
+            authoritativeEdition,
+            StringComparison.OrdinalIgnoreCase))
         {
-            conflicts++;
-            warnings.Add(
-                $"Skipped {entityName} {entityId}: the local record is newer.");
-            return false;
+            return true;
         }
 
-        return true;
+        conflicts++;
+        warnings.Add(
+            $"Skipped {entityName} {entityId}: " +
+            $"{authoritativeEdition} edition owns this data type.");
+        return false;
     }
 
     private static DateTime EnsureUtc(DateTime value) =>
