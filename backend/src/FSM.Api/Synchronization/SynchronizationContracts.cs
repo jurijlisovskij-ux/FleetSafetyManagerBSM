@@ -40,6 +40,8 @@ public sealed record UserSynchronizationItem(
     string PasswordHash,
     UserRole Role,
     bool IsActive,
+    bool ForcePasswordChange,
+    bool IsLocked,
     DateTime LastModifiedUtc,
     bool IsDeleted);
 

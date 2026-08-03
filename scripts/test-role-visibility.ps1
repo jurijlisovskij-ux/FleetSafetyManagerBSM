@@ -10,6 +10,7 @@ $documentsPath = Join-Path $testRoot "Documents"
 $logPath = Join-Path $testRoot "api.log"
 $errorLogPath = Join-Path $testRoot "api-error.log"
 $balticVesselId = $null
+$adminPassword = "Admin123!"
 $process = $null
 
 function Assert-True {
@@ -202,7 +203,76 @@ try {
     $adminHeaders = Get-AuthorizationHeader `
         -BaseUrl $baseUrl `
         -Email "admin@fsm.local" `
-        -Password "Admin123!"
+        -Password $adminPassword
+
+    $temporaryUser = Invoke-Json -Method Post -Uri "$baseUrl/api/users" -Headers $adminHeaders -Body @{
+        fullName = "Temporary Superintendent"
+        email = "temporary@fsm.local"
+        role = 1
+        isActive = $true
+        password = "Temporary123!"
+        vesselIds = @()
+        forcePasswordChange = $true
+    }
+    $temporaryLogin = Invoke-Json -Method Post -Uri "$baseUrl/api/auth/login" -Body @{
+        email = "temporary@fsm.local"; password = "Temporary123!"
+    }
+    Assert-True $temporaryLogin.forcePasswordChange "Temporary password must force a password change."
+    $temporaryHeaders = @{ Authorization = "Bearer $($temporaryLogin.token)" }
+    Invoke-Json -Method Post -Uri "$baseUrl/api/auth/change-password" -Headers $temporaryHeaders -Body @{
+        currentPassword = "Temporary123!"; newPassword = "Changed123!"
+    } | Out-Null
+    $changedLogin = Invoke-Json -Method Post -Uri "$baseUrl/api/auth/login" -Body @{
+        email = "temporary@fsm.local"; password = "Changed123!"
+    }
+    Assert-True (-not $changedLogin.forcePasswordChange) "Changed password must clear the temporary-password flag."
+    Invoke-Json -Method Post -Uri "$baseUrl/api/users/$($temporaryUser.id)/reset-password" -Headers $adminHeaders -Body @{
+        password = "Reset123!"; temporaryPassword = $true
+    } | Out-Null
+    $resetLogin = Invoke-Json -Method Post -Uri "$baseUrl/api/auth/login" -Body @{
+        email = "temporary@fsm.local"; password = "Reset123!"
+    }
+    Assert-True $resetLogin.forcePasswordChange "Administrator reset must support temporary passwords."
+    for ($attempt = 1; $attempt -le 5; $attempt++) {
+        try { Invoke-Json -Method Post -Uri "$baseUrl/api/auth/login" -Body @{
+            email = "temporary@fsm.local"; password = "Wrong123!"
+        } | Out-Null } catch { }
+    }
+    $lockedStatus = try {
+        Invoke-Json -Method Post -Uri "$baseUrl/api/auth/login" -Body @{
+            email = "temporary@fsm.local"; password = "Reset123!"
+        } | Out-Null; 200
+    } catch { [int]$_.Exception.Response.StatusCode }
+    Assert-True ([int]$lockedStatus -eq 401) "Locked user must not sign in."
+    Invoke-Json -Method Post -Uri "$baseUrl/api/users/$($temporaryUser.id)/unlock" -Headers $adminHeaders | Out-Null
+    $unlockedLogin = Invoke-Json -Method Post -Uri "$baseUrl/api/auth/login" -Body @{
+        email = "temporary@fsm.local"; password = "Reset123!"
+    }
+    Assert-True $unlockedLogin.forcePasswordChange "Unlocked user must retain temporary-password state."
+    Invoke-Json -Method Put -Uri "$baseUrl/api/users/$($temporaryUser.id)" -Headers $adminHeaders -Body @{
+        fullName = "Temporary Superintendent"; email = "temporary@fsm.local"; role = 1
+        isActive = $false; password = $null; vesselIds = @(); forcePasswordChange = $true
+    } | Out-Null
+    $disabledStatus = try {
+        Invoke-Json -Method Post -Uri "$baseUrl/api/auth/login" -Body @{
+            email = "temporary@fsm.local"; password = "Reset123!"
+        } | Out-Null; 200
+    } catch { [int]$_.Exception.Response.StatusCode }
+    Assert-True ([int]$disabledStatus -eq 401) "Disabled user must not sign in."
+
+    $oldKey = Join-Path $testRoot "old.fsmkey"
+    $newKey = Join-Path $testRoot "new.fsmkey"
+    Invoke-WebRequest -Uri "$baseUrl/api/auth/recovery-key" -Headers $adminHeaders -OutFile $oldKey -UseBasicParsing
+    Invoke-WebRequest -Method Post -Uri "$baseUrl/api/auth/recovery-key/rotate" -Headers $adminHeaders -OutFile $newKey -UseBasicParsing
+    $oldKeyStatus = & curl.exe -s -o NUL -w "%{http_code}" `
+        -F "recoveryFile=@$oldKey" -F "newPassword=Rejected123!" `
+        "$baseUrl/api/auth/emergency-recovery"
+    Assert-True ([int]$oldKeyStatus -eq 401) "Rotated recovery key must invalidate the old key (received $oldKeyStatus)."
+    $adminPassword = "Recovered123!"
+    $newKeyStatus = & curl.exe -s -o NUL -w "%{http_code}" `
+        -F "recoveryFile=@$newKey" -F "newPassword=$adminPassword" `
+        "$baseUrl/api/auth/emergency-recovery"
+    Assert-True ([int]$newKeyStatus -eq 200) "Active recovery key must reset OfficeAdmin password."
 
     $balticVessel = Invoke-Json `
         -Method Post `
@@ -440,7 +510,7 @@ try {
     $adminHeaders = Get-AuthorizationHeader `
         -BaseUrl $baseUrl `
         -Email "admin@fsm.local" `
-        -Password "Admin123!"
+        -Password $adminPassword
     $persistedAdminVessels = @((
         Invoke-Json -Method Get -Uri "$baseUrl/api/vessels" -Headers $adminHeaders) |
             ForEach-Object { $_ })
@@ -575,6 +645,18 @@ try {
             -Uri "$baseUrl/api/vessels/$balticVesselId/equipment" `
             -Headers $crewHeaders) -eq 403) `
         "A non-local vessel ID must return HTTP 403 for Ship Crew."
+
+    Stop-FsmApi $process
+    $process = $null
+    $databaseText = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($databasePath))
+    $normalLogs = ((Get-Content $logPath -Raw -ErrorAction SilentlyContinue) +
+        (Get-Content $errorLogPath -Raw -ErrorAction SilentlyContinue))
+    foreach ($secret in @("Temporary123!", "Changed123!", "Reset123!", "Recovered123!")) {
+        Assert-True (-not $databaseText.Contains($secret)) "Plaintext password leaked into SQLite."
+        Assert-True (-not $normalLogs.Contains($secret)) "Plaintext password leaked into normal logs."
+    }
+    Assert-True (-not ([Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($newKey))).Contains($adminPassword)) `
+        "Recovery file must not contain a readable password."
 
     Write-Host "Role visibility integration tests passed."
     Write-Host "  System Administrator: all vessels and fleet totals"

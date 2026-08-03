@@ -31,12 +31,34 @@ public static class SchemaUpgrade
             await AddSynchronizationColumnsAsync(db, "vessels");
             await AddSynchronizationColumnsAsync(db, "equipment");
             await AddSynchronizationColumnsAsync(db, "user_vessels");
+            await AddColumnIfMissingAsync(db, "users", "ForcePasswordChange", "INTEGER NOT NULL DEFAULT 0");
+            await AddColumnIfMissingAsync(db, "users", "IsLocked", "INTEGER NOT NULL DEFAULT 0");
+            await AddColumnIfMissingAsync(db, "users", "FailedLoginAttempts", "INTEGER NOT NULL DEFAULT 0");
             await CreateSynchronizationTablesAsync(db);
+            await CreateSecurityTablesAsync(db);
         }
         finally
         {
             await db.Database.CloseConnectionAsync();
         }
+    }
+
+    private static async Task CreateSecurityTablesAsync(FsmDbContext db)
+    {
+        const string sql = """
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                Id TEXT NOT NULL PRIMARY KEY,
+                DateUtc TEXT NOT NULL,
+                Action TEXT NOT NULL,
+                Operator TEXT NOT NULL,
+                TargetUser TEXT NULL,
+                ComputerName TEXT NOT NULL,
+                Result TEXT NOT NULL,
+                Summary TEXT NULL
+            );
+            CREATE INDEX IF NOT EXISTS IX_audit_logs_DateUtc ON audit_logs (DateUtc);
+            """;
+        await db.Database.ExecuteSqlRawAsync(sql);
     }
 
     private static async Task AddSynchronizationColumnsAsync(

@@ -105,6 +105,8 @@ public sealed class SynchronizationExchangeService(
                 x.PasswordHash,
                 x.Role,
                 x.IsActive,
+                x.ForcePasswordChange,
+                x.IsLocked,
                 x.LastModifiedUtc,
                 x.IsDeleted))
             .ToListAsync(cancellationToken);
@@ -293,6 +295,9 @@ public sealed class SynchronizationExchangeService(
             existing.PasswordHash = incoming.PasswordHash;
             existing.Role = incoming.Role;
             existing.IsActive = incoming.IsActive;
+            existing.ForcePasswordChange = incoming.ForcePasswordChange;
+            existing.IsLocked = incoming.IsLocked;
+            existing.FailedLoginAttempts = 0;
             existing.LastModifiedUtc = EnsureUtc(incoming.LastModifiedUtc);
             existing.IsDeleted = incoming.IsDeleted;
             accepted++;

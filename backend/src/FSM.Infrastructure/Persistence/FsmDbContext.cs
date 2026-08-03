@@ -13,6 +13,7 @@ public sealed class FsmDbContext(DbContextOptions<FsmDbContext> options)
     public DbSet<SynchronizationSetting> SynchronizationSettings => Set<SynchronizationSetting>();
     public DbSet<SynchronizationLog> SynchronizationLogs => Set<SynchronizationLog>();
     public DbSet<SynchronizationTransfer> SynchronizationTransfers => Set<SynchronizationTransfer>();
+    public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -72,6 +73,19 @@ public sealed class FsmDbContext(DbContextOptions<FsmDbContext> options)
             entity.HasIndex(x => new { x.VesselId, x.Category });
             entity.HasIndex(x => x.ExpiryDate);
             entity.HasQueryFilter(x => !x.IsDeleted);
+        });
+
+        modelBuilder.Entity<AuditLog>(entity =>
+        {
+            entity.ToTable("audit_logs");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Action).HasMaxLength(80).IsRequired();
+            entity.Property(x => x.Operator).HasMaxLength(255).IsRequired();
+            entity.Property(x => x.TargetUser).HasMaxLength(255);
+            entity.Property(x => x.ComputerName).HasMaxLength(255).IsRequired();
+            entity.Property(x => x.Result).HasMaxLength(20).IsRequired();
+            entity.Property(x => x.Summary).HasMaxLength(500);
+            entity.HasIndex(x => x.DateUtc);
         });
 
         modelBuilder.Entity<SynchronizationSetting>(entity =>

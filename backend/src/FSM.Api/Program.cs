@@ -61,6 +61,8 @@ builder.Services.AddScoped<SynchronizationExchangeService>();
 builder.Services.AddScoped<SynchronizationStatusService>();
 builder.Services.AddScoped<SynchronizationClient>();
 builder.Services.AddScoped<VesselAccessService>();
+builder.Services.AddScoped<AuditService>();
+builder.Services.AddSingleton<RecoveryKeyService>();
 builder.Services.AddHostedService<SynchronizationWorker>();
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
@@ -134,6 +136,12 @@ using (var scope = app.Services.CreateScope())
     await db.Database.EnsureCreatedAsync();
     await SchemaUpgrade.ApplyAsync(db);
     await SeedData.InitializeAsync(db);
+    if (scope.ServiceProvider.GetRequiredService<RecoveryKeyService>().EnsureCreated())
+    {
+        scope.ServiceProvider.GetRequiredService<AuditService>()
+            .Add("Recovery key generated", "System", null);
+        await db.SaveChangesAsync();
+    }
 }
 
 app.Run();

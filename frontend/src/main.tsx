@@ -12,6 +12,7 @@ type LoginResult = {
   email: string;
   role: "OfficeAdmin" | "Superintendent" | "Crew";
   edition: "Office" | "Ship";
+  forcePasswordChange: boolean;
 };
 
 
@@ -21,6 +22,8 @@ type ManagedUser = {
   email: string;
   role: LoginResult["role"];
   isActive: boolean;
+  isLocked: boolean;
+  forcePasswordChange: boolean;
   vesselIds: string[];
 };
 
@@ -229,6 +232,9 @@ function App() {
     useState<Set<Equipment["category"]>>(new Set());
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showRecovery, setShowRecovery] = useState(false);
+  const [recoveryFile, setRecoveryFile] = useState<File | null>(null);
+  const [newPassword, setNewPassword] = useState("");
 
   async function refreshFleetData() {
     if (!user) return;
@@ -332,9 +338,37 @@ function App() {
           <button className="primary" disabled={busy}>
             {busy ? "Signing in..." : "Sign In"}
           </button>
+          <button type="button" onClick={() => setShowRecovery(value => !value)}>Forgot administrator password?</button>
+          {showRecovery && <>
+            <p>Local access and the active FSM-Recovery.fsmkey are required.</p>
+            <input type="file" accept=".fsmkey" onChange={event => setRecoveryFile(event.target.files?.[0] ?? null)} />
+            <input type="password" placeholder="New administrator password" value={newPassword} onChange={event => setNewPassword(event.target.value)} />
+            <button type="button" disabled={!recoveryFile || newPassword.length < 8} onClick={async () => {
+              const form = new FormData(); form.append("recoveryFile", recoveryFile!); form.append("newPassword", newPassword);
+              const response = await fetch(`${apiBaseUrl}/auth/emergency-recovery`, { method: "POST", body: form });
+              const body = await response.json().catch(() => null); setError(body?.message ?? "Recovery failed.");
+            }}>Emergency Recovery</button>
+          </>}
         </form>
       </div>
     );
+  }
+
+  if (user.forcePasswordChange) {
+    return <div className="login-page"><form className="card" onSubmit={async event => {
+      event.preventDefault();
+      const response = await authFetch(`${apiBaseUrl}/auth/change-password`, user.token, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword: password, newPassword }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) { setError(body?.message ?? "Unable to change password."); return; }
+      setUser({ ...user, forcePasswordChange: false });
+      setPassword(newPassword);
+    }}><h1>Change temporary password</h1>{error && <div className="error">{error}</div>}
+      <label>New password<input type="password" value={newPassword} onChange={event => setNewPassword(event.target.value)} /></label>
+      <button className="primary" disabled={newPassword.length < 8}>Change Password</button>
+    </form></div>;
   }
 
   return (
@@ -1517,6 +1551,7 @@ function UserAdministrationDialog({
     useState(false);
   const [administrationError, setAdministrationError] =
     useState("");
+  const [temporaryPassword, setTemporaryPassword] = useState(true);
 
   const isNew = !draft.id;
 
@@ -1624,8 +1659,8 @@ function UserAdministrationDialog({
                   ? 1
                   : 2,
             isActive: draft.isActive,
-            password:
-              draft.password || null,
+            password: isNew ? draft.password : null,
+            forcePasswordChange: isNew && temporaryPassword,
             vesselIds:
               draft.role === "OfficeAdmin"
                 ? []
@@ -1667,6 +1702,29 @@ function UserAdministrationDialog({
     }
   }
 
+  async function resetPassword() {
+    if (draft.password.length < 8) {
+      setAdministrationError("Enter a password of at least 8 characters.");
+      return;
+    }
+    setAdministrationBusy(true);
+    const response = await authFetch(`${apiBaseUrl}/users/${draft.id}/reset-password`, token, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: draft.password, temporaryPassword }),
+    });
+    const body = await response.json().catch(() => null);
+    setAdministrationBusy(false);
+    setAdministrationError(body?.message ?? "Unable to reset password.");
+    if (response.ok) setDraft(current => ({ ...current, password: "" }));
+  }
+
+  async function unlockUser() {
+    const response = await authFetch(`${apiBaseUrl}/users/${draft.id}/unlock`, token, { method: "POST" });
+    const body = await response.json().catch(() => null);
+    setAdministrationError(body?.message ?? "Unable to unlock account.");
+    if (response.ok) void loadAdministrationData();
+  }
+
   function toggleVessel(vesselId: string) {
     setDraft(current => {
       const exists =
@@ -1692,6 +1750,20 @@ function UserAdministrationDialog({
             <p>
               Roles and vessel access.
             </p>
+            <button type="button" onClick={() => void authFetch(`${apiBaseUrl}/auth/recovery-key`, token).then(async response => {
+              if (!response.ok) throw new Error("Unable to export recovery key.");
+              const url = URL.createObjectURL(await response.blob());
+              const link = document.createElement("a"); link.href = url; link.download = "FSM-Recovery.fsmkey"; link.click(); URL.revokeObjectURL(url);
+            }).catch(error => setAdministrationError((error as Error).message))}>Export Recovery Key</button>
+            <button type="button" onClick={() => {
+              if (!window.confirm("Rotate recovery key and invalidate the old key?")) return;
+              void authFetch(`${apiBaseUrl}/auth/recovery-key/rotate`, token, { method: "POST" }).then(async response => {
+                if (!response.ok) throw new Error("Unable to rotate recovery key.");
+                const url = URL.createObjectURL(await response.blob());
+                const link = document.createElement("a"); link.href = url; link.download = "FSM-Recovery.fsmkey"; link.click(); URL.revokeObjectURL(url);
+                setAdministrationError("Recovery key rotated successfully.");
+              }).catch(error => setAdministrationError((error as Error).message));
+            }}>Rotate Recovery Key</button>
           </div>
 
           <button
@@ -1741,6 +1813,7 @@ function UserAdministrationDialog({
                   {!item.isActive
                     ? " · Inactive"
                     : ""}
+                  {item.isLocked ? " · Locked" : ""}
                 </small>
               </button>
             ))}
@@ -1830,6 +1903,12 @@ function UserAdministrationDialog({
               Active user
             </label>
 
+            {!isNew && <label className="active-user-option">
+              <input type="checkbox" checked={temporaryPassword}
+                onChange={event => setTemporaryPassword(event.target.checked)} />
+              Force password change at next login
+            </label>}
+
             {draft.role !== "OfficeAdmin" &&
               <div className="vessel-assignment-block">
                 <strong>Assigned Vessels</strong>
@@ -1860,6 +1939,10 @@ function UserAdministrationDialog({
               </div>}
 
             <div className="service-request-actions">
+              {!isNew && <button type="button" disabled={administrationBusy}
+                onClick={unlockUser}>Unlock</button>}
+              {!isNew && <button type="button" disabled={administrationBusy || draft.password.length < 8}
+                onClick={resetPassword}>Reset Password</button>}
               <button
                 type="button"
                 disabled={administrationBusy}

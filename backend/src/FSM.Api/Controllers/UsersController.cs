@@ -1,5 +1,6 @@
 using FSM.Domain.Entities;
 using FSM.Domain.Enums;
+using FSM.Api.Services;
 using FSM.Infrastructure.Persistence;
 using FSM.Infrastructure.Security;
 using Microsoft.AspNetCore.Authorization;
@@ -14,12 +15,14 @@ public sealed record SaveUserRequest(
     UserRole Role,
     bool IsActive,
     string? Password,
-    IReadOnlyList<Guid> VesselIds);
+    IReadOnlyList<Guid> VesselIds,
+    bool ForcePasswordChange = false);
+public sealed record ResetPasswordRequest(string Password, bool TemporaryPassword);
 
 [ApiController]
 [Authorize(Roles = "OfficeAdmin")]
 [Route("api/users")]
-public sealed class UsersController(FsmDbContext db) : ControllerBase
+public sealed class UsersController(FsmDbContext db, AuditService audit) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> GetAll(
@@ -35,6 +38,8 @@ public sealed class UsersController(FsmDbContext db) : ControllerBase
                 x.Email,
                 Role = x.Role.ToString(),
                 x.IsActive,
+                x.IsLocked,
+                x.ForcePasswordChange,
                 VesselIds = x.VesselAssignments
                     .Select(a => a.VesselId)
                     .ToList()
@@ -75,6 +80,7 @@ public sealed class UsersController(FsmDbContext db) : ControllerBase
                 PasswordHasher.Hash(request.Password),
             Role = request.Role,
             IsActive = request.IsActive
+            ,ForcePasswordChange = request.ForcePasswordChange
         };
 
         db.Users.Add(user);
@@ -91,6 +97,8 @@ public sealed class UsersController(FsmDbContext db) : ControllerBase
             }
         }
 
+        await db.SaveChangesAsync(cancellationToken);
+        audit.Add("User created", User.Identity?.Name ?? "OfficeAdmin", user.Email);
         await db.SaveChangesAsync(cancellationToken);
 
         return Created(
@@ -167,12 +175,44 @@ public sealed class UsersController(FsmDbContext db) : ControllerBase
         user.LastModifiedUtc = changedUtc;
 
         await db.SaveChangesAsync(cancellationToken);
+        audit.Add(request.IsActive ? "User enabled" : "User disabled",
+            User.Identity?.Name ?? "OfficeAdmin", user.Email);
+        await db.SaveChangesAsync(cancellationToken);
 
         return Ok(ToResponse(
             user,
             request.Role == UserRole.OfficeAdmin
                 ? Array.Empty<Guid>()
                 : request.VesselIds));
+    }
+
+    [HttpPost("{userId:guid}/reset-password")]
+    public async Task<IActionResult> ResetPassword(Guid userId, ResetPasswordRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(request.Password) || request.Password.Length < 8)
+            return BadRequest(new { message = "Password must contain at least 8 characters." });
+        var user = await db.Users.SingleOrDefaultAsync(x => x.Id == userId, cancellationToken);
+        if (user is null) return NotFound();
+        user.PasswordHash = PasswordHasher.Hash(request.Password);
+        user.ForcePasswordChange = request.TemporaryPassword;
+        user.IsLocked = false;
+        user.FailedLoginAttempts = 0;
+        audit.Add("Password reset", User.Identity?.Name ?? "OfficeAdmin", user.Email);
+        await db.SaveChangesAsync(cancellationToken);
+        return Ok(new { message = "Password reset successfully.", user.ForcePasswordChange });
+    }
+
+    [HttpPost("{userId:guid}/unlock")]
+    public async Task<IActionResult> Unlock(Guid userId, CancellationToken cancellationToken)
+    {
+        var user = await db.Users.SingleOrDefaultAsync(x => x.Id == userId, cancellationToken);
+        if (user is null) return NotFound();
+        user.IsLocked = false;
+        user.FailedLoginAttempts = 0;
+        audit.Add("Account unlocked", User.Identity?.Name ?? "OfficeAdmin", user.Email);
+        await db.SaveChangesAsync(cancellationToken);
+        return Ok(new { message = "Account unlocked." });
     }
 
     private async Task<IActionResult?> ValidateAsync(
@@ -247,6 +287,8 @@ public sealed class UsersController(FsmDbContext db) : ControllerBase
             user.Email,
             Role = user.Role.ToString(),
             user.IsActive,
+            user.IsLocked,
+            user.ForcePasswordChange,
             VesselIds = vesselIds.Distinct().ToList()
         };
 }
