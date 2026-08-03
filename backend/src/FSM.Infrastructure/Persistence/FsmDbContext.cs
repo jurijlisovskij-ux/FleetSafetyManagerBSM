@@ -14,6 +14,8 @@ public sealed class FsmDbContext(DbContextOptions<FsmDbContext> options)
     public DbSet<SynchronizationLog> SynchronizationLogs => Set<SynchronizationLog>();
     public DbSet<SynchronizationTransfer> SynchronizationTransfers => Set<SynchronizationTransfer>();
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
+    public DbSet<MedicineItem> MedicineItems => Set<MedicineItem>();
+    public DbSet<VesselMedicineConfiguration> VesselMedicineConfigurations => Set<VesselMedicineConfiguration>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -86,6 +88,20 @@ public sealed class FsmDbContext(DbContextOptions<FsmDbContext> options)
             entity.Property(x => x.Result).HasMaxLength(20).IsRequired();
             entity.Property(x => x.Summary).HasMaxLength(500);
             entity.HasIndex(x => x.DateUtc);
+        });
+
+        modelBuilder.Entity<MedicineItem>(entity =>
+        {
+            entity.ToTable("medicine_items"); entity.HasKey(x => x.Id);
+            entity.Property(x => x.ItemName).HasMaxLength(250).IsRequired();
+            entity.Property(x => x.Unit).HasMaxLength(50).IsRequired();
+            entity.HasIndex(x => new { x.VesselId, x.ItemName, x.FormStrength, x.IsDangerousGoods }).IsUnique();
+            entity.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<VesselMedicineConfiguration>(entity =>
+        {
+            entity.ToTable("vessel_medicine_configuration"); entity.HasKey(x => x.VesselId);
+            entity.HasQueryFilter(x => !x.IsDeleted);
         });
 
         modelBuilder.Entity<SynchronizationSetting>(entity =>

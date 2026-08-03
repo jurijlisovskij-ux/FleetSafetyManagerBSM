@@ -101,6 +101,16 @@ type DashboardData = {
   synchronization: SynchronizationStatus[];
 };
 
+type MedicineItem = {
+  id: string; itemName: string; formStrength?: string;
+  requiredQuantity: number; actualQuantity: number; unit: string;
+  batchNumber?: string; expiryDate?: string; storageLocation?: string;
+  medicalCategory?: "A" | "B"; isDangerousGoods: boolean;
+  replacementRequired: boolean; remarks?: string; isActive: boolean;
+  isStandardTemplateItem: boolean;
+  status: "OK" | "Soon" | "Overdue / Expired" | "Missing" | "Inactive";
+};
+
 type SynchronizationStatus = {
   vesselId: string;
   vesselName: string;
@@ -228,6 +238,7 @@ function App() {
     useState(false);
   const [showSynchronization, setShowSynchronization] =
     useState(false);
+  const [showMedicine, setShowMedicine] = useState(false);
   const [collapsed, setCollapsed] =
     useState<Set<Equipment["category"]>>(new Set());
   const [error, setError] = useState("");
@@ -651,6 +662,9 @@ function App() {
               >
                 Vessel Profile
               </button>
+              <button onClick={() => setShowMedicine(true)}>
+                Medicine Chest
+              </button>
               {user.role === "OfficeAdmin" &&
                 <button onClick={() => setShowCopyEquipment(true)}>
                   Copy Equipment List
@@ -822,6 +836,12 @@ function App() {
 
 
 
+      {showMedicine && currentVessel &&
+        <MedicineDialog
+          token={user.token}
+          vessel={currentVessel}
+          onClose={() => setShowMedicine(false)}
+        />}
       {showCopyEquipment &&
         currentVessel &&
         user.role === "OfficeAdmin" &&
@@ -3636,6 +3656,69 @@ function DocumentControl({
       </div>
     </div>
   );
+}
+
+function MedicineDialog({ token, vessel, onClose }: {
+  token: string; vessel: Vessel; onClose: () => void;
+}) {
+  const [items, setItems] = useState<MedicineItem[]>([]);
+  const [configuration, setConfiguration] = useState({ categoryAEnabled: false, categoryBEnabled: false, dangerousGoodsEnabled: false, warningDays: 60 });
+  const [message, setMessage] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<{ item: string; action: string }[]>([]);
+  const [draft, setDraft] = useState({ itemName: "", formStrength: "", requiredQuantity: 0, actualQuantity: 0, unit: "", batchNumber: "", expiryDate: "", storageLocation: "", medicalCategory: "B", isDangerousGoods: false, replacementRequired: false, remarks: "" });
+
+  async function load() {
+    const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine`, token);
+    if (!response.ok) throw new Error("Unable to load Medicine Chest.");
+    const data = await response.json(); setItems(data.items); setConfiguration(data.configuration);
+  }
+  useEffect(() => { load().catch(e => setMessage(e.message)); }, []);
+  async function saveConfiguration(next = configuration) {
+    const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine/configuration`, token, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
+    if (!response.ok) throw new Error("Medicine configuration could not be saved."); setMessage("Configuration saved.");
+  }
+  async function addItem() {
+    const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine/items`, token, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...draft, isActive: true, isStandardTemplateItem: false, expiryDate: draft.expiryDate || null }) });
+    if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.message || "Medicine item could not be added."); }
+    setDraft({ ...draft, itemName: "", formStrength: "", unit: "", batchNumber: "", expiryDate: "", remarks: "" }); await load();
+  }
+  async function deactivate(item: MedicineItem) {
+    const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine/items/${item.id}`, token, { method: "DELETE" });
+    if (!response.ok) throw new Error("Medicine item could not be removed."); await load();
+  }
+  async function download(kind: "export" | "replenishment") {
+    const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine/${kind}`, token); if (!response.ok) throw new Error("Workbook could not be generated.");
+    const url = URL.createObjectURL(await response.blob()); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${kind}-${vessel.vesselName}.xlsx`; anchor.click(); URL.revokeObjectURL(url);
+  }
+  async function importTemplate(apply: boolean) {
+    if (!file) return; const body = new FormData(); body.append("file", file);
+    const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine/import?apply=${apply}&overwriteActual=false`, token, { method: "POST", body });
+    const result = await response.json(); if (!response.ok) throw new Error(result.message || "Template validation failed.");
+    if (apply) { setPreview([]); setMessage(`${result.imported} template rows imported without overwriting onboard quantities.`); await load(); } else setPreview(result.preview);
+  }
+  const act = (operation: () => Promise<void>) => operation().catch(e => setMessage(e.message));
+  return <div className="modal-backdrop"><div className="modal-card wide-modal">
+    <div className="modal-header"><div><h2>Medicine Chest</h2><p>{vessel.vesselName} · IMO {vessel.imoNumber}</p></div><button onClick={onClose}>Close</button></div>
+    {message && <div className="notice">{message}</div>}
+    <section><h3>Vessel configuration</h3><div className="form-grid">
+      {(["categoryAEnabled", "categoryBEnabled", "dangerousGoodsEnabled"] as const).map((key) => <label key={key}><input type="checkbox" checked={configuration[key]} onChange={e => setConfiguration({ ...configuration, [key]: e.target.checked })} /> {key === "categoryAEnabled" ? "Category A" : key === "categoryBEnabled" ? "Category B" : "Dangerous Goods"}</label>)}
+      <label>Expiry warning days<input type="number" min="0" max="730" value={configuration.warningDays} onChange={e => setConfiguration({ ...configuration, warningDays: Number(e.target.value) })} /></label>
+    </div><button onClick={() => act(() => saveConfiguration())}>Save configuration</button></section>
+    <section><h3>Add company-specific item</h3><div className="form-grid">
+      <label>English item name<input value={draft.itemName} onChange={e => setDraft({ ...draft, itemName: e.target.value })} /></label><label>Form / strength<input value={draft.formStrength} onChange={e => setDraft({ ...draft, formStrength: e.target.value })} /></label>
+      <label>Required quantity<input type="number" min="0" value={draft.requiredQuantity} onChange={e => setDraft({ ...draft, requiredQuantity: Number(e.target.value) })} /></label><label>Actual quantity<input type="number" min="0" value={draft.actualQuantity} onChange={e => setDraft({ ...draft, actualQuantity: Number(e.target.value) })} /></label>
+      <label>Unit<input value={draft.unit} onChange={e => setDraft({ ...draft, unit: e.target.value })} /></label><label>Batch number<input value={draft.batchNumber} onChange={e => setDraft({ ...draft, batchNumber: e.target.value })} /></label>
+      <label>Expiry date<input type="date" value={draft.expiryDate} onChange={e => setDraft({ ...draft, expiryDate: e.target.value })} /></label><label>Storage location<input value={draft.storageLocation} onChange={e => setDraft({ ...draft, storageLocation: e.target.value })} /></label>
+      <label>Category<select value={draft.medicalCategory} onChange={e => setDraft({ ...draft, medicalCategory: e.target.value })}><option>A</option><option>B</option></select></label><label><input type="checkbox" checked={draft.isDangerousGoods} onChange={e => setDraft({ ...draft, isDangerousGoods: e.target.checked })} /> Dangerous Goods list</label>
+      <label><input type="checkbox" checked={draft.replacementRequired} onChange={e => setDraft({ ...draft, replacementRequired: e.target.checked })} /> Replacement required</label><label>Remarks<input value={draft.remarks} onChange={e => setDraft({ ...draft, remarks: e.target.value })} /></label>
+    </div><button className="primary" disabled={!draft.itemName.trim() || !draft.unit.trim()} onClick={() => act(addItem)}>Add item</button></section>
+    <section><div className="workspace-actions"><h3>Register</h3><button onClick={() => act(() => download("export"))}>Export register</button><button onClick={() => act(() => download("replenishment"))}>Replenishment XLSX</button></div>
+      <div className="table-scroll"><table><thead><tr><th>Item</th><th>List</th><th>Required</th><th>Actual</th><th>Batch</th><th>Expiry</th><th>Status</th><th></th></tr></thead><tbody>{items.map(item => <tr key={item.id}><td>{item.itemName}<small>{item.formStrength}</small></td><td>{item.isDangerousGoods ? "Dangerous Goods" : `Category ${item.medicalCategory || "—"}`}</td><td>{item.requiredQuantity} {item.unit}</td><td>{item.actualQuantity} {item.unit}</td><td>{item.batchNumber || "—"}</td><td>{formatDate(item.expiryDate)}</td><td><span className={`status ${item.status.toLowerCase().replace(/ /g, "-")}`}>{item.status}</span></td><td><button onClick={() => act(() => deactivate(item))}>{item.isStandardTemplateItem ? "Deactivate" : "Remove"}</button></td></tr>)}</tbody></table></div>
+    </section>
+    <section><h3>Approved template import</h3><p className="muted">No regulatory list is bundled. Import an approved Excel or CSV template; preview is mandatory and actual quantities are preserved.</p><input type="file" accept=".xlsx,.csv" onChange={e => { setFile(e.target.files?.[0] || null); setPreview([]); }} /><button disabled={!file} onClick={() => act(() => importTemplate(false))}>Preview import</button>{preview.length > 0 && <><ul>{preview.map((x, i) => <li key={i}>{x.item}: {x.action}</li>)}</ul><button className="primary" onClick={() => act(() => importTemplate(true))}>Apply approved template</button></>}
+    </section>
+  </div></div>;
 }
 
 function Detail({ label, value }: { label: string; value: string }) {

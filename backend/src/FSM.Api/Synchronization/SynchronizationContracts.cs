@@ -56,6 +56,19 @@ public sealed record VesselSettingsSynchronizationItem(
     int AutomaticIntervalHours,
     DateTime LastModifiedUtc);
 
+public sealed record MedicineSynchronizationItem(
+    Guid Id, Guid VesselId, string ItemName, string? FormStrength,
+    decimal RequiredQuantity, decimal ActualQuantity, string Unit,
+    string? BatchNumber, DateOnly? ExpiryDate, string? StorageLocation,
+    string? MedicalCategory, bool IsDangerousGoods, bool ReplacementRequired,
+    string? Remarks, bool IsActive, bool IsStandardTemplateItem,
+    DateTime LastModifiedUtc, bool IsDeleted);
+
+public sealed record MedicineConfigurationSynchronizationItem(
+    Guid VesselId, bool CategoryAEnabled, bool CategoryBEnabled,
+    bool DangerousGoodsEnabled, int WarningDays, DateTime LastModifiedUtc,
+    bool IsDeleted);
+
 public sealed record SynchronizationFileItem(
     string RelativePath,
     long Size,
@@ -68,11 +81,14 @@ public sealed record SynchronizationPayload(
     IReadOnlyList<UserSynchronizationItem> Users,
     IReadOnlyList<UserVesselSynchronizationItem> UserVessels,
     IReadOnlyList<VesselSettingsSynchronizationItem> VesselSettings,
+    IReadOnlyList<MedicineSynchronizationItem> Medicine,
+    IReadOnlyList<MedicineConfigurationSynchronizationItem> MedicineConfiguration,
     IReadOnlyList<SynchronizationFileItem> Files)
 {
     public int RecordCount =>
         Vessels.Count + Equipment.Count + Users.Count +
-        UserVessels.Count + VesselSettings.Count;
+        UserVessels.Count + VesselSettings.Count + Medicine.Count +
+        MedicineConfiguration.Count;
 }
 
 public sealed record SynchronizationExchangeRequest(

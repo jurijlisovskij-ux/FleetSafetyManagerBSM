@@ -36,11 +36,35 @@ public static class SchemaUpgrade
             await AddColumnIfMissingAsync(db, "users", "FailedLoginAttempts", "INTEGER NOT NULL DEFAULT 0");
             await CreateSynchronizationTablesAsync(db);
             await CreateSecurityTablesAsync(db);
+            await CreateMedicineTablesAsync(db);
         }
         finally
         {
             await db.Database.CloseConnectionAsync();
         }
+    }
+
+    private static async Task CreateMedicineTablesAsync(FsmDbContext db)
+    {
+        const string sql = """
+            CREATE TABLE IF NOT EXISTS medicine_items (
+              Id TEXT NOT NULL PRIMARY KEY, VesselId TEXT NOT NULL, ItemName TEXT NOT NULL,
+              FormStrength TEXT NULL, RequiredQuantity TEXT NOT NULL, ActualQuantity TEXT NOT NULL,
+              Unit TEXT NOT NULL, BatchNumber TEXT NULL, ExpiryDate TEXT NULL, StorageLocation TEXT NULL,
+              MedicalCategory TEXT NULL, IsDangerousGoods INTEGER NOT NULL, ReplacementRequired INTEGER NOT NULL,
+              Remarks TEXT NULL, IsActive INTEGER NOT NULL, IsStandardTemplateItem INTEGER NOT NULL,
+              LastModifiedUtc TEXT NOT NULL, IsDeleted INTEGER NOT NULL DEFAULT 0,
+              FOREIGN KEY (VesselId) REFERENCES vessels(Id) ON DELETE CASCADE);
+            CREATE UNIQUE INDEX IF NOT EXISTS IX_medicine_items_identity
+              ON medicine_items(VesselId, ItemName, FormStrength, IsDangerousGoods);
+            CREATE TABLE IF NOT EXISTS vessel_medicine_configuration (
+              VesselId TEXT NOT NULL PRIMARY KEY, CategoryAEnabled INTEGER NOT NULL,
+              CategoryBEnabled INTEGER NOT NULL, DangerousGoodsEnabled INTEGER NOT NULL,
+              WarningDays INTEGER NOT NULL, LastModifiedUtc TEXT NOT NULL,
+              IsDeleted INTEGER NOT NULL DEFAULT 0,
+              FOREIGN KEY (VesselId) REFERENCES vessels(Id) ON DELETE CASCADE);
+            """;
+        await db.Database.ExecuteSqlRawAsync(sql);
     }
 
     private static async Task CreateSecurityTablesAsync(FsmDbContext db)

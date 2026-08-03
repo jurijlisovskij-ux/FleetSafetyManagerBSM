@@ -147,12 +147,27 @@ public sealed class SynchronizationExchangeService(
                 snapshotUtc,
                 cancellationToken);
 
+        var medicine = await db.MedicineItems.IgnoreQueryFilters().AsNoTracking()
+            .Where(x => x.VesselId == vesselId && x.LastModifiedUtc > sinceUtc && x.LastModifiedUtc <= snapshotUtc)
+            .Select(x => new MedicineSynchronizationItem(x.Id, x.VesselId, x.ItemName, x.FormStrength,
+                x.RequiredQuantity, x.ActualQuantity, x.Unit, x.BatchNumber, x.ExpiryDate,
+                x.StorageLocation, x.MedicalCategory, x.IsDangerousGoods, x.ReplacementRequired,
+                x.Remarks, x.IsActive, x.IsStandardTemplateItem, x.LastModifiedUtc, x.IsDeleted))
+            .ToListAsync(cancellationToken);
+        var medicineConfiguration = await db.VesselMedicineConfigurations.IgnoreQueryFilters().AsNoTracking()
+            .Where(x => x.VesselId == vesselId && x.LastModifiedUtc > sinceUtc && x.LastModifiedUtc <= snapshotUtc)
+            .Select(x => new MedicineConfigurationSynchronizationItem(x.VesselId, x.CategoryAEnabled,
+                x.CategoryBEnabled, x.DangerousGoodsEnabled, x.WarningDays, x.LastModifiedUtc, x.IsDeleted))
+            .ToListAsync(cancellationToken);
+
         return new SynchronizationPayload(
             vessels,
             equipment,
             users,
             userVessels,
             vesselSettings,
+            medicine,
+            medicineConfiguration,
             changedFiles);
     }
 
@@ -333,6 +348,48 @@ public sealed class SynchronizationExchangeService(
             existing.LastModifiedUtc = EnsureUtc(incoming.LastModifiedUtc);
             existing.IsDeleted = incoming.IsDeleted;
             accepted++;
+        }
+
+        foreach (var incoming in payload.Medicine.Where(x => x.VesselId == vesselId))
+        {
+            var existing = await db.MedicineItems.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.Id == incoming.Id, cancellationToken);
+            existing ??= await db.MedicineItems.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.VesselId == vesselId &&
+                x.ItemName.ToUpper() == incoming.ItemName.ToUpper() && x.FormStrength == incoming.FormStrength &&
+                x.IsDangerousGoods == incoming.IsDangerousGoods, cancellationToken);
+            if (existing is null)
+            {
+                existing = new MedicineItem { Id = incoming.Id, VesselId = vesselId, ItemName = incoming.ItemName, Unit = incoming.Unit };
+                db.MedicineItems.Add(existing);
+            }
+            // Office owns templates/configuration; Ship owns onboard inventory observations.
+            if (sourceEdition.Equals("Office", StringComparison.OrdinalIgnoreCase))
+            {
+                existing.ItemName = incoming.ItemName; existing.FormStrength = incoming.FormStrength;
+                existing.RequiredQuantity = incoming.RequiredQuantity; existing.Unit = incoming.Unit;
+                existing.StorageLocation = incoming.StorageLocation; existing.MedicalCategory = incoming.MedicalCategory;
+                existing.IsDangerousGoods = incoming.IsDangerousGoods; existing.IsActive = incoming.IsActive;
+                existing.IsStandardTemplateItem = incoming.IsStandardTemplateItem; existing.IsDeleted = incoming.IsDeleted;
+            }
+            else if (sourceEdition.Equals("Ship", StringComparison.OrdinalIgnoreCase))
+            {
+                existing.ActualQuantity = incoming.ActualQuantity; existing.BatchNumber = incoming.BatchNumber;
+                existing.ExpiryDate = incoming.ExpiryDate; existing.ReplacementRequired = incoming.ReplacementRequired;
+                existing.Remarks = incoming.Remarks;
+            }
+            else { conflicts++; warnings.Add($"Skipped medicine {incoming.Id}: unknown source edition."); continue; }
+            existing.LastModifiedUtc = EnsureUtc(incoming.LastModifiedUtc); accepted++;
+        }
+
+        if (sourceEdition.Equals("Office", StringComparison.OrdinalIgnoreCase))
+        {
+            foreach (var incoming in payload.MedicineConfiguration.Where(x => x.VesselId == vesselId))
+            {
+                var existing = await db.VesselMedicineConfigurations.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.VesselId == vesselId, cancellationToken);
+                if (existing is null) { existing = new VesselMedicineConfiguration { VesselId = vesselId }; db.Add(existing); }
+                existing.CategoryAEnabled = incoming.CategoryAEnabled; existing.CategoryBEnabled = incoming.CategoryBEnabled;
+                existing.DangerousGoodsEnabled = incoming.DangerousGoodsEnabled; existing.WarningDays = incoming.WarningDays;
+                existing.IsDeleted = incoming.IsDeleted; existing.LastModifiedUtc = EnsureUtc(incoming.LastModifiedUtc); accepted++;
+            }
         }
 
         if (localEdition.Equals("Ship", StringComparison.OrdinalIgnoreCase) &&
