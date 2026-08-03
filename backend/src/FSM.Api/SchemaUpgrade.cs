@@ -37,11 +37,34 @@ public static class SchemaUpgrade
             await CreateSynchronizationTablesAsync(db);
             await CreateSecurityTablesAsync(db);
             await CreateMedicineTablesAsync(db);
+            await CreateInspectionTablesAsync(db);
         }
         finally
         {
             await db.Database.CloseConnectionAsync();
         }
+    }
+
+    private static async Task CreateInspectionTablesAsync(FsmDbContext db)
+    {
+        const string sql = """
+            CREATE TABLE IF NOT EXISTS inspection_reports (
+              Id TEXT NOT NULL PRIMARY KEY, VesselId TEXT NOT NULL, ReportNumber TEXT NOT NULL,
+              InspectionDate TEXT NOT NULL, Inspector TEXT NOT NULL, PdfPath TEXT NOT NULL,
+              PdfSha256 TEXT NOT NULL, LastModifiedUtc TEXT NOT NULL, IsDeleted INTEGER NOT NULL DEFAULT 0,
+              FOREIGN KEY (VesselId) REFERENCES vessels(Id) ON DELETE CASCADE);
+            CREATE UNIQUE INDEX IF NOT EXISTS IX_inspection_reports_ReportNumber ON inspection_reports(ReportNumber);
+            CREATE INDEX IF NOT EXISTS IX_inspection_reports_VesselId_InspectionDate ON inspection_reports(VesselId, InspectionDate);
+            CREATE TABLE IF NOT EXISTS inspection_report_items (
+              Id TEXT NOT NULL PRIMARY KEY, InspectionReportId TEXT NOT NULL, EquipmentId TEXT NOT NULL,
+              Result TEXT NOT NULL, Remarks TEXT NULL, CorrectiveAction TEXT NULL, AttachmentPath TEXT NULL,
+              ClosureDate TEXT NULL, ClosedBy TEXT NULL, ClosureRemarks TEXT NULL, ClosureAttachmentPath TEXT NULL,
+              LastModifiedUtc TEXT NOT NULL, IsDeleted INTEGER NOT NULL DEFAULT 0,
+              FOREIGN KEY (InspectionReportId) REFERENCES inspection_reports(Id) ON DELETE CASCADE,
+              FOREIGN KEY (EquipmentId) REFERENCES equipment(Id) ON DELETE RESTRICT);
+            CREATE INDEX IF NOT EXISTS IX_inspection_report_items_ReportId ON inspection_report_items(InspectionReportId);
+            """;
+        await db.Database.ExecuteSqlRawAsync(sql);
     }
 
     private static async Task CreateMedicineTablesAsync(FsmDbContext db)

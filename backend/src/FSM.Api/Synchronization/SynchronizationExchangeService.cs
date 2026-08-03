@@ -159,6 +159,17 @@ public sealed class SynchronizationExchangeService(
             .Select(x => new MedicineConfigurationSynchronizationItem(x.VesselId, x.CategoryAEnabled,
                 x.CategoryBEnabled, x.DangerousGoodsEnabled, x.WarningDays, x.LastModifiedUtc, x.IsDeleted))
             .ToListAsync(cancellationToken);
+        var inspectionReports = await db.InspectionReports.IgnoreQueryFilters().AsNoTracking()
+            .Where(x => x.VesselId == vesselId && x.LastModifiedUtc > sinceUtc && x.LastModifiedUtc <= snapshotUtc)
+            .Select(x => new InspectionReportSynchronizationItem(x.Id, x.VesselId, x.ReportNumber,
+                x.InspectionDate, x.Inspector, x.PdfPath, x.PdfSha256, x.LastModifiedUtc, x.IsDeleted))
+            .ToListAsync(cancellationToken);
+        var reportIds = await db.InspectionReports.IgnoreQueryFilters().Where(x => x.VesselId == vesselId).Select(x => x.Id).ToListAsync(cancellationToken);
+        var inspectionReportItems = await db.InspectionReportItems.IgnoreQueryFilters().AsNoTracking()
+            .Where(x => reportIds.Contains(x.InspectionReportId) && x.LastModifiedUtc > sinceUtc && x.LastModifiedUtc <= snapshotUtc)
+            .Select(x => new InspectionReportItemSynchronizationItem(x.Id, x.InspectionReportId, x.EquipmentId,
+                x.Result, x.Remarks, x.CorrectiveAction, x.AttachmentPath, x.ClosureDate, x.ClosedBy,
+                x.ClosureRemarks, x.ClosureAttachmentPath, x.LastModifiedUtc, x.IsDeleted)).ToListAsync(cancellationToken);
 
         return new SynchronizationPayload(
             vessels,
@@ -168,6 +179,8 @@ public sealed class SynchronizationExchangeService(
             vesselSettings,
             medicine,
             medicineConfiguration,
+            inspectionReports,
+            inspectionReportItems,
             changedFiles);
     }
 
@@ -390,6 +403,27 @@ public sealed class SynchronizationExchangeService(
                 existing.DangerousGoodsEnabled = incoming.DangerousGoodsEnabled; existing.WarningDays = incoming.WarningDays;
                 existing.IsDeleted = incoming.IsDeleted; existing.LastModifiedUtc = EnsureUtc(incoming.LastModifiedUtc); accepted++;
             }
+        }
+
+        foreach (var incoming in payload.InspectionReports.Where(x => x.VesselId == vesselId))
+        {
+            var existing = await db.InspectionReports.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.Id == incoming.Id, cancellationToken)
+                ?? await db.InspectionReports.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.PdfSha256 == incoming.PdfSha256, cancellationToken);
+            if (existing is null) { existing = new InspectionReport { Id = incoming.Id, VesselId = vesselId, ReportNumber = incoming.ReportNumber, Inspector = incoming.Inspector, PdfPath = incoming.PdfPath, PdfSha256 = incoming.PdfSha256 }; db.Add(existing); }
+            else if (existing.LastModifiedUtc > EnsureUtc(incoming.LastModifiedUtc)) continue;
+            existing.ReportNumber = incoming.ReportNumber; existing.InspectionDate = incoming.InspectionDate;
+            existing.Inspector = incoming.Inspector; existing.PdfPath = incoming.PdfPath; existing.PdfSha256 = incoming.PdfSha256;
+            existing.LastModifiedUtc = EnsureUtc(incoming.LastModifiedUtc); existing.IsDeleted = incoming.IsDeleted; accepted++;
+        }
+        foreach (var incoming in payload.InspectionReportItems)
+        {
+            if (!await db.InspectionReports.IgnoreQueryFilters().AnyAsync(x => x.Id == incoming.InspectionReportId && x.VesselId == vesselId, cancellationToken)) continue;
+            var existing = await db.InspectionReportItems.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.Id == incoming.Id, cancellationToken);
+            if (existing is null) { existing = new InspectionReportItem { Id = incoming.Id, InspectionReportId = incoming.InspectionReportId, EquipmentId = incoming.EquipmentId, Result = incoming.Result }; db.Add(existing); }
+            else if (existing.LastModifiedUtc > EnsureUtc(incoming.LastModifiedUtc)) continue;
+            existing.Result = incoming.Result; existing.Remarks = incoming.Remarks; existing.CorrectiveAction = incoming.CorrectiveAction; existing.AttachmentPath = incoming.AttachmentPath;
+            existing.ClosureDate = incoming.ClosureDate; existing.ClosedBy = incoming.ClosedBy; existing.ClosureRemarks = incoming.ClosureRemarks; existing.ClosureAttachmentPath = incoming.ClosureAttachmentPath;
+            existing.LastModifiedUtc = EnsureUtc(incoming.LastModifiedUtc); existing.IsDeleted = incoming.IsDeleted; accepted++;
         }
 
         if (localEdition.Equals("Ship", StringComparison.OrdinalIgnoreCase) &&

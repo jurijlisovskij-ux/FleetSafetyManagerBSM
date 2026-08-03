@@ -681,6 +681,9 @@ function App() {
               >
                 Generate Inspection List
               </button>
+              <button onClick={() => setSelectedForRequest(new Set(equipment.filter(x => x.category === "LSA").map(x => x.id)))}>Select LSA</button>
+              <button onClick={() => setSelectedForRequest(new Set(equipment.filter(x => x.category === "FFE").map(x => x.id)))}>Select FFE</button>
+              <button disabled={selectedForRequest.size === 0} onClick={() => setSelectedForRequest(new Set())}>Clear selection</button>
               <button
                 className="primary"
                 disabled={selectedForRequest.size === 0}
@@ -2741,6 +2744,10 @@ function InspectionListDialog({
 }) {
   const [format, setFormat] =
     useState<InspectionListFormat>("pdf");
+  const [inspectionDate, setInspectionDate] = useState(new Date().toISOString().slice(0, 10));
+  const [inspector, setInspector] = useState("");
+  const [results, setResults] = useState<Record<string, { result: "OK" | "Defect" | "Not Applicable"; remarks: string; correctiveAction: string }>>({});
+  const [history, setHistory] = useState<{ id: string; reportNumber: string; inspectionDate: string; inspector: string; defects: number }[]>([]);
   const [includeCertificates, setIncludeCertificates] =
     useState(false);
   const [inspectionBusy, setInspectionBusy] =
@@ -2751,6 +2758,10 @@ function InspectionListDialog({
   const selectedEquipment = equipment.filter(item =>
     selectedIds.has(item.id),
   );
+  useEffect(() => {
+    authFetch(`${apiBaseUrl}/inspection-list/vessels/${vessel.id}/history`, token)
+      .then(r => r.ok ? r.json() : []).then(setHistory).catch(() => undefined);
+  }, []);
 
   async function generateInspectionList() {
     if (selectedEquipment.length === 0) {
@@ -2778,6 +2789,9 @@ function InspectionListDialog({
               selectedEquipment.map(item => item.id),
             format,
             includeCertificates,
+            inspectionDate,
+            inspector,
+            results: selectedEquipment.map(item => ({ equipmentId: item.id, ...(results[item.id] || { result: "OK", remarks: "", correctiveAction: "" }) })),
           }),
         },
       );
@@ -2863,22 +2877,14 @@ function InspectionListDialog({
             <input
               type="radio"
               name="inspection-format"
-              checked={format === "excel"}
-              onChange={() => setFormat("excel")}
-            />
-            Excel
-          </label>
-
-          <label className="attachment-option">
-            <input
-              type="radio"
-              name="inspection-format"
               checked={format === "pdf"}
               onChange={() => setFormat("pdf")}
             />
-            Printable PDF
+            Completed PDF report
           </label>
         </div>
+
+        <div className="form-grid"><label>Inspection date<input type="date" value={inspectionDate} onChange={e => setInspectionDate(e.target.value)} /></label><label>Inspector<input value={inspector} onChange={e => setInspector(e.target.value)} placeholder="Inspector name" /></label></div>
 
         <div className="attachments-block">
           <span>Attachments</span>
@@ -2922,9 +2928,12 @@ function InspectionListDialog({
                   ? ` · Expiry ${formatDate(item.expiryDate)}`
                   : ""}
               </span>
+              <div className="form-grid"><label>Result<select value={results[item.id]?.result || "OK"} onChange={e => setResults(current => ({ ...current, [item.id]: { ...(current[item.id] || { remarks: "", correctiveAction: "" }), result: e.target.value as "OK" | "Defect" | "Not Applicable" } }))}><option>OK</option><option>Defect</option><option>Not Applicable</option></select></label><label>Remarks<input value={results[item.id]?.remarks || ""} onChange={e => setResults(current => ({ ...current, [item.id]: { ...(current[item.id] || { result: "OK", correctiveAction: "" }), remarks: e.target.value } }))} /></label><label>Corrective action<input value={results[item.id]?.correctiveAction || ""} onChange={e => setResults(current => ({ ...current, [item.id]: { ...(current[item.id] || { result: "OK", remarks: "" }), correctiveAction: e.target.value } }))} /></label></div>
             </div>
           ))}
         </div>
+
+        <h3>Inspection history</h3><div className="selected-equipment-list">{history.length === 0 ? <span className="muted">No completed PDF reports.</span> : history.map(report => <div className="selected-equipment-item" key={report.id}><strong>{report.reportNumber}</strong><span>{formatDate(report.inspectionDate)} · {report.inspector} · {report.defects} open defect(s)</span><button onClick={() => authFetch(`${apiBaseUrl}/inspection-list/reports/${report.id}/pdf`, token).then(async response => { if (!response.ok) return; const url = URL.createObjectURL(await response.blob()); window.open(url, "_blank"); })}>Open PDF</button></div>)}</div>
 
         <div className="service-request-actions">
           <button

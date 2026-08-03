@@ -29,7 +29,7 @@ public sealed class MedicineController(FsmDbContext db, VesselAccessService vess
         var today = DateOnly.FromDateTime(DateTime.UtcNow);
         var items = await db.MedicineItems.AsNoTracking().Where(x => x.VesselId == vesselId)
             .OrderBy(x => x.IsDangerousGoods).ThenBy(x => x.ItemName).ToListAsync(ct);
-        return Ok(new { configuration = config, items = items.Select(x => Response(x, today, config.WarningDays)) });
+        return Ok(new { configuration = config, items = items.Select(x => ToResponse(x, today, config.WarningDays)) });
     }
 
     [HttpPut("configuration")]
@@ -52,7 +52,7 @@ public sealed class MedicineController(FsmDbContext db, VesselAccessService vess
         if (await Duplicate(vesselId, request, null, ct)) return Conflict(new { message = "This medicine item already exists for the vessel and list." });
         var item = new MedicineItem { Id = Guid.NewGuid(), VesselId = vesselId, ItemName = request.ItemName.Trim(), Unit = request.Unit.Trim() };
         Apply(item, request); db.Add(item); await db.SaveChangesAsync(ct);
-        return Created($"api/vessels/{vesselId}/medicine/items/{item.Id}", Response(item, DateOnly.FromDateTime(DateTime.UtcNow), 60));
+        return Created($"api/vessels/{vesselId}/medicine/items/{item.Id}", ToResponse(item, DateOnly.FromDateTime(DateTime.UtcNow), 60));
     }
 
     [HttpPut("items/{itemId:guid}")]
@@ -63,7 +63,7 @@ public sealed class MedicineController(FsmDbContext db, VesselAccessService vess
         var item = await db.MedicineItems.SingleOrDefaultAsync(x => x.Id == itemId && x.VesselId == vesselId, ct); if (item is null) return NotFound();
         if (await Duplicate(vesselId, request, itemId, ct)) return Conflict(new { message = "This medicine item already exists for the vessel and list." });
         Apply(item, request); await db.SaveChangesAsync(ct); var config = await GetConfiguration(vesselId, ct);
-        return Ok(Response(item, DateOnly.FromDateTime(DateTime.UtcNow), config.WarningDays));
+        return Ok(ToResponse(item, DateOnly.FromDateTime(DateTime.UtcNow), config.WarningDays));
     }
 
     [HttpDelete("items/{itemId:guid}")]
@@ -146,7 +146,7 @@ public sealed class MedicineController(FsmDbContext db, VesselAccessService vess
     private static string? Validate(SaveMedicineItemRequest r) => string.IsNullOrWhiteSpace(r.ItemName) ? "English item name is required." : string.IsNullOrWhiteSpace(r.Unit) ? "Unit is required." : r.RequiredQuantity < 0 || r.ActualQuantity < 0 ? "Quantities cannot be negative." : r.MedicalCategory is not null && r.MedicalCategory is not ("A" or "B") ? "Category must be A or B." : null;
     private static void Apply(MedicineItem x, SaveMedicineItemRequest r) { x.ItemName = r.ItemName.Trim(); x.FormStrength = Clean(r.FormStrength); x.RequiredQuantity = r.RequiredQuantity; x.ActualQuantity = r.ActualQuantity; x.Unit = r.Unit.Trim(); x.BatchNumber = Clean(r.BatchNumber); x.ExpiryDate = DateOnly.TryParseExact(r.ExpiryDate, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var d) ? d : null; x.StorageLocation = Clean(r.StorageLocation); x.MedicalCategory = Clean(r.MedicalCategory)?.ToUpperInvariant(); x.IsDangerousGoods = r.IsDangerousGoods; x.ReplacementRequired = r.ReplacementRequired; x.Remarks = Clean(r.Remarks); x.IsActive = r.IsActive; x.IsStandardTemplateItem = r.IsStandardTemplateItem; x.LastModifiedUtc = DateTime.UtcNow; }
     private static string Status(MedicineItem x, DateOnly today, int warningDays) => !x.IsActive ? "Inactive" : x.ActualQuantity < x.RequiredQuantity ? "Missing" : x.ExpiryDate < today ? "Overdue / Expired" : x.ExpiryDate <= today.AddDays(warningDays) ? "Soon" : "OK";
-    private static object Response(MedicineItem x, DateOnly today, int warningDays) => new { x.Id, x.VesselId, x.ItemName, x.FormStrength, x.RequiredQuantity, x.ActualQuantity, x.Unit, x.BatchNumber, x.ExpiryDate, x.StorageLocation, x.MedicalCategory, x.IsDangerousGoods, x.ReplacementRequired, x.Remarks, x.IsActive, x.IsStandardTemplateItem, Status = Status(x, today, warningDays) };
+    private static object ToResponse(MedicineItem x, DateOnly today, int warningDays) => new { x.Id, x.VesselId, x.ItemName, x.FormStrength, x.RequiredQuantity, x.ActualQuantity, x.Unit, x.BatchNumber, x.ExpiryDate, x.StorageLocation, x.MedicalCategory, x.IsDangerousGoods, x.ReplacementRequired, x.Remarks, x.IsActive, x.IsStandardTemplateItem, Status = Status(x, today, warningDays) };
     private static string? Clean(string? value) => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
     private static List<Dictionary<string, string>> ReadRows(IFormFile file)
     {

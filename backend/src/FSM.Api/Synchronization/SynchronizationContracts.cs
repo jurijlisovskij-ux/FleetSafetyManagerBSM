@@ -69,6 +69,15 @@ public sealed record MedicineConfigurationSynchronizationItem(
     bool DangerousGoodsEnabled, int WarningDays, DateTime LastModifiedUtc,
     bool IsDeleted);
 
+public sealed record InspectionReportSynchronizationItem(Guid Id, Guid VesselId,
+    string ReportNumber, DateOnly InspectionDate, string Inspector, string PdfPath,
+    string PdfSha256, DateTime LastModifiedUtc, bool IsDeleted);
+public sealed record InspectionReportItemSynchronizationItem(Guid Id,
+    Guid InspectionReportId, Guid EquipmentId, string Result, string? Remarks,
+    string? CorrectiveAction, string? AttachmentPath, DateOnly? ClosureDate,
+    string? ClosedBy, string? ClosureRemarks, string? ClosureAttachmentPath,
+    DateTime LastModifiedUtc, bool IsDeleted);
+
 public sealed record SynchronizationFileItem(
     string RelativePath,
     long Size,
@@ -83,12 +92,15 @@ public sealed record SynchronizationPayload(
     IReadOnlyList<VesselSettingsSynchronizationItem> VesselSettings,
     IReadOnlyList<MedicineSynchronizationItem> Medicine,
     IReadOnlyList<MedicineConfigurationSynchronizationItem> MedicineConfiguration,
+    IReadOnlyList<InspectionReportSynchronizationItem> InspectionReports,
+    IReadOnlyList<InspectionReportItemSynchronizationItem> InspectionReportItems,
     IReadOnlyList<SynchronizationFileItem> Files)
 {
     public int RecordCount =>
         Vessels.Count + Equipment.Count + Users.Count +
         UserVessels.Count + VesselSettings.Count + Medicine.Count +
-        MedicineConfiguration.Count;
+        MedicineConfiguration.Count + InspectionReports.Count +
+        InspectionReportItems.Count;
 }
 
 public sealed record SynchronizationExchangeRequest(

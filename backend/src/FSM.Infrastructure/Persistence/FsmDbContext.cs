@@ -16,6 +16,8 @@ public sealed class FsmDbContext(DbContextOptions<FsmDbContext> options)
     public DbSet<AuditLog> AuditLogs => Set<AuditLog>();
     public DbSet<MedicineItem> MedicineItems => Set<MedicineItem>();
     public DbSet<VesselMedicineConfiguration> VesselMedicineConfigurations => Set<VesselMedicineConfiguration>();
+    public DbSet<InspectionReport> InspectionReports => Set<InspectionReport>();
+    public DbSet<InspectionReportItem> InspectionReportItems => Set<InspectionReportItem>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -101,6 +103,18 @@ public sealed class FsmDbContext(DbContextOptions<FsmDbContext> options)
         modelBuilder.Entity<VesselMedicineConfiguration>(entity =>
         {
             entity.ToTable("vessel_medicine_configuration"); entity.HasKey(x => x.VesselId);
+            entity.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<InspectionReport>(entity =>
+        {
+            entity.ToTable("inspection_reports"); entity.HasKey(x => x.Id);
+            entity.HasIndex(x => x.ReportNumber).IsUnique(); entity.HasIndex(x => new { x.VesselId, x.InspectionDate });
+            entity.HasQueryFilter(x => !x.IsDeleted);
+        });
+        modelBuilder.Entity<InspectionReportItem>(entity =>
+        {
+            entity.ToTable("inspection_report_items"); entity.HasKey(x => x.Id);
+            entity.HasOne(x => x.InspectionReport).WithMany(x => x.Items).HasForeignKey(x => x.InspectionReportId).OnDelete(DeleteBehavior.Cascade);
             entity.HasQueryFilter(x => !x.IsDeleted);
         });
 

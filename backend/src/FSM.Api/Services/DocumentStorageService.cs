@@ -125,6 +125,34 @@ public sealed class DocumentStorageService(IConfiguration configuration)
             .Replace("\\", "/");
     }
 
+    public async Task<string> SaveInspectionReportAsync(
+        string imoNumber, Guid reportId, byte[] content,
+        CancellationToken cancellationToken)
+    {
+        var relativeDirectory = Path.Combine("inspection-reports", imoNumber);
+        var absoluteDirectory = Path.Combine(rootPath, relativeDirectory);
+        Directory.CreateDirectory(absoluteDirectory);
+        var finalPath = Path.Combine(absoluteDirectory, $"{reportId:N}.pdf");
+        var temporaryPath = finalPath + $".{Guid.NewGuid():N}.tmp";
+        await File.WriteAllBytesAsync(temporaryPath, content, cancellationToken);
+        File.Move(temporaryPath, finalPath, overwrite: true);
+        return Path.Combine(relativeDirectory, Path.GetFileName(finalPath)).Replace("\\", "/");
+    }
+
+    public async Task<string> SaveInspectionAttachmentAsync(
+        string imoNumber, Guid itemId, string purpose, IFormFile file,
+        CancellationToken cancellationToken)
+    {
+        if (file.Length is <= 0 or > MaximumFileSize) throw new InvalidDataException("Attachment must be between 1 byte and 25 MB.");
+        var safeExtension = Path.GetExtension(Path.GetFileName(file.FileName));
+        if (safeExtension.Length > 10) throw new InvalidDataException("Attachment extension is invalid.");
+        var relativeDirectory = Path.Combine("inspection-attachments", imoNumber);
+        var absoluteDirectory = Path.Combine(rootPath, relativeDirectory); Directory.CreateDirectory(absoluteDirectory);
+        var name = $"{itemId:N}-{purpose}{safeExtension}"; var finalPath = Path.Combine(absoluteDirectory, name); var temporaryPath = finalPath + ".tmp";
+        await using (var output = new FileStream(temporaryPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920, true)) await file.CopyToAsync(output, cancellationToken);
+        File.Move(temporaryPath, finalPath, true); return Path.Combine(relativeDirectory, name).Replace("\\", "/");
+    }
+
     public void DeleteIfExists(string? relativePath)
     {
         if (string.IsNullOrWhiteSpace(relativePath))
