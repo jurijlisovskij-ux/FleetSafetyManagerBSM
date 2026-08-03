@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using FSM.Domain.Entities;
 using FSM.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 
@@ -19,7 +20,7 @@ public sealed class VesselAccessService(
             ? vesselId
             : null;
 
-    public async Task<IReadOnlyList<Guid>?> GetAccessibleVesselIdsAsync(
+    public async Task<IReadOnlyList<Vessel>?> GetAccessibleVesselsAsync(
         ClaimsPrincipal user,
         CancellationToken cancellationToken)
     {
@@ -35,7 +36,6 @@ public sealed class VesselAccessService(
             return await query
                 .OrderBy(x => x.VesselName)
                 .ThenBy(x => x.Id)
-                .Select(x => x.Id)
                 .ToListAsync(cancellationToken);
         }
 
@@ -56,7 +56,6 @@ public sealed class VesselAccessService(
             return await query
                 .OrderBy(x => x.VesselName)
                 .ThenBy(x => x.Id)
-                .Select(x => x.Id)
                 .Take(1)
                 .ToListAsync(cancellationToken);
         }
@@ -64,8 +63,20 @@ public sealed class VesselAccessService(
         return await query
             .OrderBy(x => x.VesselName)
             .ThenBy(x => x.Id)
-            .Select(x => x.Id)
             .ToListAsync(cancellationToken);
+    }
+
+    public async Task<IReadOnlyList<Guid>?> GetAccessibleVesselIdsAsync(
+        ClaimsPrincipal user,
+        CancellationToken cancellationToken)
+    {
+        var vessels = await GetAccessibleVesselsAsync(
+            user,
+            cancellationToken);
+
+        return vessels?
+            .Select(x => x.Id)
+            .ToList();
     }
 
     public async Task<bool> CanAccessVesselAsync(

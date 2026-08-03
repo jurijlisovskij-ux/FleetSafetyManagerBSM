@@ -32,16 +32,16 @@ public sealed class SynchronizationController(
     public async Task<IActionResult> GetStatus(
         CancellationToken cancellationToken)
     {
-        var vesselIds = await vesselAccess.GetAccessibleVesselIdsAsync(
+        var vessels = await vesselAccess.GetAccessibleVesselsAsync(
             User,
             cancellationToken);
-        if (vesselIds is null)
+        if (vessels is null)
             return Unauthorized();
         return Ok(new
         {
             edition,
             applicationVersion = options.ApplicationVersion,
-            vessels = await statuses.GetAsync(vesselIds, cancellationToken)
+            vessels = await statuses.GetAsync(vessels, cancellationToken)
         });
     }
 

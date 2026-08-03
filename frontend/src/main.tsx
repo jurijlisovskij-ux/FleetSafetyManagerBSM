@@ -816,7 +816,6 @@ function App() {
         user.role === "OfficeAdmin" &&
         <UserAdministrationDialog
           token={user.token}
-          vessels={vessels}
           onClose={() =>
             setShowUserAdministration(false)}
         />}
@@ -930,6 +929,10 @@ function App() {
               ? { ...current, synchronization: items }
               : current);
           }}
+          onFleetChanged={() => {
+            void refreshFleetData()
+              .catch(error => setError((error as Error).message));
+          }}
         />}
 
     </div>
@@ -948,12 +951,14 @@ function SynchronizationDialog({
   initialVesselId,
   onClose,
   onStatusChanged,
+  onFleetChanged,
 }: {
   token: string;
   userRole: LoginResult["role"];
   initialVesselId?: string;
   onClose: () => void;
   onStatusChanged: (items: SynchronizationStatus[]) => void;
+  onFleetChanged: () => void;
 }) {
   const [statusResponse, setStatusResponse] =
     useState<SynchronizationStatusResponse | null>(null);
@@ -1056,6 +1061,7 @@ function SynchronizationDialog({
       }
       setPhase("Synchronization completed.");
       await refresh();
+      onFleetChanged();
     } catch (exception) {
       setPhase("Failed");
       setError((exception as Error).message);
@@ -1489,11 +1495,9 @@ function CopyEquipmentDialog({
 
 function UserAdministrationDialog({
   token,
-  vessels,
   onClose,
 }: {
   token: string;
-  vessels: Vessel[];
   onClose: () => void;
 }) {
   const emptyDraft = {
@@ -1507,6 +1511,7 @@ function UserAdministrationDialog({
   };
 
   const [users, setUsers] = useState<ManagedUser[]>([]);
+  const [vessels, setVessels] = useState<Vessel[]>([]);
   const [draft, setDraft] = useState(emptyDraft);
   const [administrationBusy, setAdministrationBusy] =
     useState(false);
@@ -1515,20 +1520,33 @@ function UserAdministrationDialog({
 
   const isNew = !draft.id;
 
-  async function loadUsers() {
+  async function loadAdministrationData() {
     setAdministrationBusy(true);
     setAdministrationError("");
 
     try {
-      const response = await authFetch(
-        `${apiBaseUrl}/users`,
-        token,
-      );
+      const [usersResponse, vesselsResponse] = await Promise.all([
+        authFetch(`${apiBaseUrl}/users`, token, {
+          cache: "no-store",
+        }),
+        authFetch(`${apiBaseUrl}/vessels`, token, {
+          cache: "no-store",
+        }),
+      ]);
 
-      if (!response.ok)
+      if (!usersResponse.ok)
         throw new Error("Unable to load users.");
+      if (!vesselsResponse.ok)
+        throw new Error("Unable to load vessels.");
 
-      setUsers(await response.json());
+      const [userItems, vesselItems]: [ManagedUser[], Vessel[]] =
+        await Promise.all([
+          usersResponse.json(),
+          vesselsResponse.json(),
+        ]);
+
+      setUsers(userItems);
+      setVessels(vesselItems);
     } catch (exception) {
       setAdministrationError(
         (exception as Error).message,
@@ -1539,7 +1557,7 @@ function UserAdministrationDialog({
   }
 
   useEffect(() => {
-    loadUsers();
+    void loadAdministrationData();
   }, []);
 
   function selectUser(item: ManagedUser) {
@@ -2068,7 +2086,7 @@ function VesselProfileDialog({
 }) {
   const canEdit = userRole === "OfficeAdmin";
 
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(true);
   const [profileBusy, setProfileBusy] =
     useState(false);
   const [profileError, setProfileError] =
@@ -3112,18 +3130,20 @@ function EquipmentDetails({
   onDocumentsChanged: () => Promise<void>;
 }) {
   const [draft, setDraft] = useState(item);
+  const [editing, setEditing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
 
   const update = <K extends keyof Equipment>(key: K, value: Equipment[K]) =>
     setDraft(current => ({ ...current, [key]: value }));
 
-  const hasChanges =
-    draft.expiryDate !== item.expiryDate ||
-    draft.inspectionBy !== item.inspectionBy ||
-    draft.quantity !== item.quantity ||
-    (draft.responsible || "") !== (item.responsible || "") ||
-    (draft.remarks || "") !== (item.remarks || "");
+  const editableKeys: (keyof Equipment)[] = [
+    "category", "equipmentName", "maker", "model", "serialNumber",
+    "quantity", "inspectionBy", "expiryDate", "remarks",
+  ];
+  const hasChanges = editableKeys.some(key =>
+    (draft[key] ?? "") !== (item[key] ?? ""),
+  );
 
   return (
     <form
@@ -3174,6 +3194,7 @@ function EquipmentDetails({
           const saved: Equipment = await response.json();
           onSaved(saved);
           setDraft(saved);
+          setEditing(false);
         } catch (exception) {
           setError((exception as Error).message);
         } finally {
@@ -3182,7 +3203,9 @@ function EquipmentDetails({
       }}
     >
       <div className="details-header">
-        <h2>Edit Equipment</h2>
+        <h2>Equipment Details</h2>
+        {!editing &&
+          <button type="button" onClick={() => setEditing(true)}>Edit</button>}
       </div>
 
       {error && <div className="error">{error}</div>}
@@ -3192,7 +3215,7 @@ function EquipmentDetails({
           Category *
           <select
             value={draft.category}
-            disabled
+            disabled={!editing || busy}
             onChange={event => update("category", event.target.value as Equipment["category"])}
           >
             {categories.map(category => <option key={category}>{category}</option>)}
@@ -3203,7 +3226,7 @@ function EquipmentDetails({
           Equipment *
           <input
             value={draft.equipmentName}
-            disabled
+            disabled={!editing || busy}
             onChange={event => update("equipmentName", event.target.value)}
           />
         </label>
@@ -3212,7 +3235,7 @@ function EquipmentDetails({
           Maker
           <input
             value={draft.maker || ""}
-            disabled
+            disabled={!editing || busy}
             onChange={event => update("maker", event.target.value)}
           />
         </label>
@@ -3221,7 +3244,7 @@ function EquipmentDetails({
           Model
           <input
             value={draft.model || ""}
-            disabled
+            disabled={!editing || busy}
             onChange={event => update("model", event.target.value)}
           />
         </label>
@@ -3230,7 +3253,7 @@ function EquipmentDetails({
           Serial Number
           <input
             value={draft.serialNumber || ""}
-            disabled
+            disabled={!editing || busy}
             onChange={event => update("serialNumber", event.target.value)}
           />
         </label>
@@ -3241,6 +3264,7 @@ function EquipmentDetails({
             type="number"
             min={1}
             value={draft.quantity}
+            disabled={!editing || busy}
             onChange={event => update("quantity", Number(event.target.value))}
           />
         </label>
@@ -3249,6 +3273,7 @@ function EquipmentDetails({
           Inspection By *
           <select
             value={draft.inspectionBy}
+            disabled={!editing || busy}
             onChange={event => update("inspectionBy", event.target.value as Equipment["inspectionBy"])}
           >
             <option>Crew</option>
@@ -3261,6 +3286,7 @@ function EquipmentDetails({
           <input
             type="date"
             value={draft.expiryDate || ""}
+            disabled={!editing || busy}
             onChange={event => update("expiryDate", event.target.value)}
           />
         </label>
@@ -3269,6 +3295,7 @@ function EquipmentDetails({
           Responsible
           <input
             value={draft.responsible || ""}
+            disabled
             onChange={event => update("responsible", event.target.value)}
           />
         </label>
@@ -3278,6 +3305,7 @@ function EquipmentDetails({
           <textarea
             rows={5}
             value={draft.remarks || ""}
+            disabled={!editing || busy}
             onChange={event => update("remarks", event.target.value)}
           />
         </label>
@@ -3329,9 +3357,22 @@ function EquipmentDetails({
         >
           Delete
         </button>
-        <button className="primary" type="submit" disabled={busy || !hasChanges}>
-          {busy ? "Saving..." : "Save"}
-        </button>
+        {editing && <>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setDraft(item);
+              setError("");
+              setEditing(false);
+            }}
+          >
+            Cancel
+          </button>
+          <button className="primary" type="submit" disabled={busy || !hasChanges}>
+            {busy ? "Saving..." : "Save"}
+          </button>
+        </>}
       </div>
     </form>
   );

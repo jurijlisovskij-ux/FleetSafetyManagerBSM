@@ -36,7 +36,7 @@ jobs:
         with:
           dotnet-version: "9.0.x"
 
-      - name: Test backend role visibility
+      - name: Test backend vessel source and role visibility
         shell: pwsh
         run: ./scripts/test-role-visibility.ps1
 

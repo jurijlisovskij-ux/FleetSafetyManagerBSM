@@ -19,19 +19,18 @@ public sealed class DashboardController(
     [HttpGet]
     public async Task<IActionResult> Get(CancellationToken cancellationToken)
     {
-        var vesselIds = await vesselAccess.GetAccessibleVesselIdsAsync(
+        var vessels = await vesselAccess.GetAccessibleVesselsAsync(
             User,
             cancellationToken);
-        if (vesselIds is null)
+        if (vessels is null)
             return Unauthorized();
 
-        var vessels = await db.Vessels.AsNoTracking()
-            .Where(x => vesselIds.Contains(x.Id))
-            .OrderBy(x => x.VesselName)
-            .ToListAsync(cancellationToken);
+        var vesselIds = vessels
+            .Select(x => x.Id)
+            .ToList();
 
         var synchronization = await synchronizationStatuses.GetAsync(
-            vesselIds,
+            vessels,
             cancellationToken);
         var equipment = await db.Equipment.AsNoTracking()
             .Where(x => vesselIds.Contains(x.VesselId))

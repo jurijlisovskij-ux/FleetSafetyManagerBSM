@@ -9,7 +9,7 @@ $databasePath = Join-Path $testRoot "fsm.db"
 $documentsPath = Join-Path $testRoot "Documents"
 $logPath = Join-Path $testRoot "api.log"
 $errorLogPath = Join-Path $testRoot "api-error.log"
-$seedVesselId = "11111111-1111-1111-1111-111111111111"
+$balticVesselId = $null
 $process = $null
 
 function Assert-True {
@@ -62,6 +62,22 @@ function Invoke-Json {
     }
 
     return $response.Content | ConvertFrom-Json
+}
+
+function Invoke-FileDownload {
+    param(
+        [string]$Uri,
+        [hashtable]$Headers,
+        $Body
+    )
+
+    return Invoke-WebRequest `
+        -Method Post `
+        -Uri $Uri `
+        -Headers $Headers `
+        -ContentType "application/json" `
+        -Body ($Body | ConvertTo-Json -Depth 8) `
+        -UseBasicParsing
 }
 
 function Get-AuthorizationHeader {
@@ -188,12 +204,27 @@ try {
         -Email "admin@fsm.local" `
         -Password "Admin123!"
 
+    $balticVessel = Invoke-Json `
+        -Method Post `
+        -Uri "$baseUrl/api/vessels" `
+        -Headers $adminHeaders `
+        -Body @{
+            vesselName = "MV BALTIC"
+            imoNumber = "9126998"
+            flag = "Cyprus"
+            companyName = "FSM Test"
+            invoicingDetails = $null
+            accountingEmail = "baltic@fsm.local"
+        }
+
+    $balticVesselId = [string]$balticVessel.id
+
     $secondVessel = Invoke-Json `
         -Method Post `
         -Uri "$baseUrl/api/vessels" `
         -Headers $adminHeaders `
         -Body @{
-            vesselName = "MV AUTHORIZED"
+            vesselName = "MV AMADEUS"
             imoNumber = "9000001"
             flag = "Lithuania"
             companyName = "FSM Test"
@@ -216,7 +247,7 @@ try {
             role = 1
             isActive = $true
             password = $null
-            vesselIds = @($secondVesselId)
+            vesselIds = @($balticVesselId, $secondVesselId)
         } | Out-Null
 
     Invoke-Json `
@@ -229,10 +260,26 @@ try {
             role = 2
             isActive = $true
             password = $null
-            vesselIds = @($seedVesselId, $secondVesselId)
+            vesselIds = @($balticVesselId, $secondVesselId)
         } | Out-Null
 
-    Invoke-Json `
+    $balticEquipment = Invoke-Json `
+        -Method Post `
+        -Uri "$baseUrl/api/vessels/$balticVesselId/equipment" `
+        -Headers $adminHeaders `
+        -Body @{
+            category = 1
+            equipmentName = "MV BALTIC Fire Extinguisher"
+            maker = $null
+            model = $null
+            serialNumber = "BALTIC-001"
+            quantity = 1
+            inspectionBy = 0
+            expiryDate = "2027-02-15"
+            remarks = $null
+        }
+
+    $amadeusEquipment = Invoke-Json `
         -Method Post `
         -Uri "$baseUrl/api/vessels/$secondVesselId/equipment" `
         -Headers $adminHeaders `
@@ -246,7 +293,98 @@ try {
             inspectionBy = 0
             expiryDate = "2027-01-15"
             remarks = $null
-        } | Out-Null
+        }
+
+    $eebdEquipment = Invoke-Json `
+        -Method Post `
+        -Uri "$baseUrl/api/vessels/$balticVesselId/equipment" `
+        -Headers $adminHeaders `
+        -Body @{
+            category = 1
+            equipmentName = "EEBD"
+            maker = "Drager"
+            model = "Oxy 3000"
+            serialNumber = "EEBD-001"
+            quantity = 1
+            inspectionBy = 1
+            expiryDate = "2026-08-04"
+            remarks = "Clear expiry test"
+        }
+
+    $updatedEpirb = Invoke-Json `
+        -Method Put `
+        -Uri "$baseUrl/api/vessels/$secondVesselId/equipment/$($amadeusEquipment.id)" `
+        -Headers $adminHeaders `
+        -Body @{
+            category = 0
+            equipmentName = "EPIRB"
+            maker = "Jotron"
+            model = "Tron 60S"
+            serialNumber = "AUTH-001"
+            quantity = 2
+            inspectionBy = 0
+            expiryDate = "2026-01-01"
+            remarks = "Edited expiry"
+        }
+    Assert-True ($updatedEpirb.status -eq "Overdue") `
+        "Editing EPIRB expiry must recalculate status immediately."
+
+    $updatedEebd = Invoke-Json `
+        -Method Put `
+        -Uri "$baseUrl/api/vessels/$balticVesselId/equipment/$($eebdEquipment.id)" `
+        -Headers $adminHeaders `
+        -Body @{
+            category = 1
+            equipmentName = "EEBD"
+            maker = "Drager"
+            model = "Oxy 3000"
+            serialNumber = "EEBD-001"
+            quantity = 1
+            inspectionBy = 1
+            expiryDate = $null
+            remarks = "No expiry applicable"
+        }
+    Assert-True ($null -eq $updatedEebd.expiryDate -and $updatedEebd.status -eq "OK") `
+        "Cleared EEBD expiry must remain empty and valid."
+
+    foreach ($vesselCase in @(
+        @{
+            VesselId = $balticVesselId
+            EquipmentId = [string]$balticEquipment.id
+        },
+        @{
+            VesselId = $secondVesselId
+            EquipmentId = [string]$amadeusEquipment.id
+        }
+    )) {
+        $serviceRequest = Invoke-FileDownload `
+            -Uri "$baseUrl/api/service-request" `
+            -Headers $adminHeaders `
+            -Body @{
+                vesselId = $vesselCase.VesselId
+                equipmentIds = @($vesselCase.EquipmentId)
+                port = $null
+                eta = $null
+                etd = $null
+                remarks = $null
+                includeCertificates = $false
+                includeReports = $false
+            }
+        $inspectionList = Invoke-FileDownload `
+            -Uri "$baseUrl/api/inspection-list" `
+            -Headers $adminHeaders `
+            -Body @{
+                vesselId = $vesselCase.VesselId
+                equipmentIds = @($vesselCase.EquipmentId)
+                format = "excel"
+                includeCertificates = $false
+            }
+
+        Assert-True ($serviceRequest.StatusCode -eq 200) `
+            "Service Requests must resolve every authoritative vessel."
+        Assert-True ($inspectionList.StatusCode -eq 200) `
+            "Inspection Lists must resolve every authoritative vessel."
+    }
 
     $adminVessels = @((
         Invoke-Json -Method Get -Uri "$baseUrl/api/vessels" -Headers $adminHeaders) |
@@ -255,15 +393,36 @@ try {
         -Method Get `
         -Uri "$baseUrl/api/dashboard" `
         -Headers $adminHeaders
+    $adminSynchronization = Invoke-Json `
+        -Method Get `
+        -Uri "$baseUrl/api/synchronization/status" `
+        -Headers $adminHeaders
+    $expectedVesselNames = "MV AMADEUS|MV BALTIC"
+    $vesselApiNames = @($adminVessels |
+        ForEach-Object { $_.vesselName } |
+        Sort-Object) -join "|"
+    $fleetStatusNames = @($adminDashboard.vesselRows |
+        ForEach-Object { $_.vesselName } |
+        Sort-Object) -join "|"
+    $synchronizationNames = @($adminSynchronization.vessels |
+        ForEach-Object { $_.vesselName } |
+        Sort-Object) -join "|"
 
     Assert-True ($adminVessels.Count -eq 2) `
         "System Administrator must receive every vessel."
     Assert-True ($adminDashboard.vessels -eq 2) `
         "System Administrator dashboard must count every vessel."
-    Assert-True ($adminDashboard.equipment -eq 7) `
+    Assert-True ($adminDashboard.equipment -eq 3) `
         "System Administrator dashboard must include fleet-wide equipment."
     Assert-True (@($adminDashboard.vesselRows).Count -eq 2) `
         "System Administrator Fleet Status must include every vessel."
+    Assert-True (
+        $vesselApiNames -eq $expectedVesselNames -and
+        $fleetStatusNames -eq $expectedVesselNames -and
+        $synchronizationNames -eq $expectedVesselNames) `
+        "Vessels, Fleet Status, User Assignment and Synchronization must use the same vessel catalog."
+    Assert-True (@($adminSynchronization.vessels).Count -eq 2) `
+        "Synchronization status must include every authoritative vessel."
     Assert-True (
         @($adminDashboard.upcoming | Where-Object vesselId -eq $secondVesselId).Count -eq 1) `
         "System Administrator Upcoming Inspections must include the new vessel."
@@ -296,9 +455,27 @@ try {
         "The dashboard vessel count must remain two after an Office API restart."
     Assert-True (@($persistedAdminDashboard.vesselRows).Count -eq 2) `
         "Fleet Status must retain both vessels after an Office API restart."
+    $persistedAmadeusEquipment = @((
+        Invoke-Json -Method Get `
+            -Uri "$baseUrl/api/vessels/$secondVesselId/equipment" `
+            -Headers $adminHeaders) | ForEach-Object { $_ })
+    $persistedBalticEquipment = @((
+        Invoke-Json -Method Get `
+            -Uri "$baseUrl/api/vessels/$balticVesselId/equipment" `
+            -Headers $adminHeaders) | ForEach-Object { $_ })
+    $persistedEpirb = $persistedAmadeusEquipment |
+        Where-Object id -eq $amadeusEquipment.id
+    $persistedEebd = $persistedBalticEquipment |
+        Where-Object id -eq $eebdEquipment.id
+    Assert-True ($persistedEpirb.expiryDate -eq "2026-01-01" -and
+        $persistedEpirb.status -eq "Overdue") `
+        "EPIRB edit and recalculated status must persist after restart."
+    Assert-True ($null -eq $persistedEebd.expiryDate -and
+        $persistedEebd.status -eq "OK") `
+        "Cleared EEBD expiry must persist after restart."
     Assert-True (
         (Get-StatusCode `
-            -Uri "$baseUrl/api/vessels/$seedVesselId/equipment" `
+            -Uri "$baseUrl/api/vessels/$balticVesselId/equipment" `
             -Headers $adminHeaders) -eq 200 -and
         (Get-StatusCode `
             -Uri "$baseUrl/api/vessels/$secondVesselId/equipment" `
@@ -309,6 +486,24 @@ try {
         -BaseUrl $baseUrl `
         -Email "superintendent@fsm.local" `
         -Password "Super123!"
+    $bothAssignedVessels = @((
+        Invoke-Json -Method Get -Uri "$baseUrl/api/vessels" -Headers $superintendentHeaders) |
+            ForEach-Object { $_ })
+    Assert-True ($bothAssignedVessels.Count -eq 2) `
+        "Superintendent assigned both vessels must see both vessels."
+
+    Invoke-Json `
+        -Method Put `
+        -Uri "$baseUrl/api/users/bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb" `
+        -Headers $adminHeaders `
+        -Body @{
+            fullName = "Technical Superintendent"
+            email = "superintendent@fsm.local"
+            role = 1
+            isActive = $true
+            password = $null
+            vesselIds = @($secondVesselId)
+        } | Out-Null
     $superintendentVessels = @((
         Invoke-Json `
             -Method Get `
@@ -335,7 +530,7 @@ try {
         "Superintendent Upcoming Inspections exposed an unauthorized vessel."
     Assert-True (
         (Get-StatusCode `
-            -Uri "$baseUrl/api/vessels/$seedVesselId/equipment" `
+            -Uri "$baseUrl/api/vessels/$balticVesselId/equipment" `
             -Headers $superintendentHeaders) -eq 403) `
         "An unauthorized vessel ID must return HTTP 403 for Superintendent."
 
@@ -377,12 +572,14 @@ try {
         "Ship Crew Upcoming Inspections exposed a non-local vessel."
     Assert-True (
         (Get-StatusCode `
-            -Uri "$baseUrl/api/vessels/$seedVesselId/equipment" `
+            -Uri "$baseUrl/api/vessels/$balticVesselId/equipment" `
             -Headers $crewHeaders) -eq 403) `
         "A non-local vessel ID must return HTTP 403 for Ship Crew."
 
     Write-Host "Role visibility integration tests passed."
     Write-Host "  System Administrator: all vessels and fleet totals"
+    Write-Host "  Vessel source: MV BALTIC and MV AMADEUS match across modules"
+    Write-Host "  Equipment, Service Requests and Inspection Lists: both vessels"
     Write-Host "  Vessel creation: persisted and visible after API restart"
     Write-Host "  Superintendent: assigned vessel only"
     Write-Host "  Ship Crew: configured local vessel only"

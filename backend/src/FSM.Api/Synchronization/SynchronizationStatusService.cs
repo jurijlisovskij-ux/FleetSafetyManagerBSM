@@ -1,3 +1,4 @@
+using FSM.Domain.Entities;
 using FSM.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
@@ -16,14 +17,9 @@ public sealed class SynchronizationStatusService(
         configuration["Application:Edition"] ?? "Office";
 
     public async Task<IReadOnlyList<SynchronizationStatusItem>> GetAsync(
-        IReadOnlyCollection<Guid> vesselIds,
+        IReadOnlyList<Vessel> vessels,
         CancellationToken cancellationToken)
     {
-        var vessels = await db.Vessels
-            .AsNoTracking()
-            .Where(x => vesselIds.Contains(x.Id))
-            .OrderBy(x => x.VesselName)
-            .ToListAsync(cancellationToken);
         var result = new List<SynchronizationStatusItem>(vessels.Count);
 
         foreach (var vessel in vessels)

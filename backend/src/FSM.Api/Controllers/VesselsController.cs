@@ -26,15 +26,13 @@ public sealed class VesselsController(
     public async Task<IActionResult> GetAssigned(
         CancellationToken cancellationToken)
     {
-        var vesselIds = await vesselAccess.GetAccessibleVesselIdsAsync(
+        var vessels = await vesselAccess.GetAccessibleVesselsAsync(
             User,
             cancellationToken);
-        if (vesselIds is null)
+        if (vessels is null)
             return Unauthorized();
 
-        var vessels = await db.Vessels.AsNoTracking()
-            .Where(x => vesselIds.Contains(x.Id))
-            .OrderBy(x => x.VesselName)
+        var response = vessels
             .Select(x => new
             {
                 x.Id,
@@ -47,9 +45,9 @@ public sealed class VesselsController(
                 DisplayName =
                     $"{x.VesselName} (IMO {x.ImoNumber})"
             })
-            .ToListAsync(cancellationToken);
+            .ToList();
 
-        return Ok(vessels);
+        return Ok(response);
     }
 
     [Authorize(Roles = "OfficeAdmin")]
