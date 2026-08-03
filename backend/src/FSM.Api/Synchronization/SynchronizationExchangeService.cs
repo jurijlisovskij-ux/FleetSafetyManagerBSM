@@ -363,7 +363,7 @@ public sealed class SynchronizationExchangeService(
             accepted++;
         }
 
-        foreach (var incoming in payload.Medicine.Where(x => x.VesselId == vesselId))
+        foreach (var incoming in (payload.Medicine ?? []).Where(x => x.VesselId == vesselId))
         {
             var existing = await db.MedicineItems.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.Id == incoming.Id, cancellationToken);
             existing ??= await db.MedicineItems.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.VesselId == vesselId &&
@@ -395,7 +395,7 @@ public sealed class SynchronizationExchangeService(
 
         if (sourceEdition.Equals("Office", StringComparison.OrdinalIgnoreCase))
         {
-            foreach (var incoming in payload.MedicineConfiguration.Where(x => x.VesselId == vesselId))
+            foreach (var incoming in (payload.MedicineConfiguration ?? []).Where(x => x.VesselId == vesselId))
             {
                 var existing = await db.VesselMedicineConfigurations.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.VesselId == vesselId, cancellationToken);
                 if (existing is null) { existing = new VesselMedicineConfiguration { VesselId = vesselId }; db.Add(existing); }
@@ -405,7 +405,7 @@ public sealed class SynchronizationExchangeService(
             }
         }
 
-        foreach (var incoming in payload.InspectionReports.Where(x => x.VesselId == vesselId))
+        foreach (var incoming in (payload.InspectionReports ?? []).Where(x => x.VesselId == vesselId))
         {
             var existing = await db.InspectionReports.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.Id == incoming.Id, cancellationToken)
                 ?? await db.InspectionReports.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.PdfSha256 == incoming.PdfSha256, cancellationToken);
@@ -415,7 +415,7 @@ public sealed class SynchronizationExchangeService(
             existing.Inspector = incoming.Inspector; existing.PdfPath = incoming.PdfPath; existing.PdfSha256 = incoming.PdfSha256;
             existing.LastModifiedUtc = EnsureUtc(incoming.LastModifiedUtc); existing.IsDeleted = incoming.IsDeleted; accepted++;
         }
-        foreach (var incoming in payload.InspectionReportItems)
+        foreach (var incoming in payload.InspectionReportItems ?? [])
         {
             if (!await db.InspectionReports.IgnoreQueryFilters().AnyAsync(x => x.Id == incoming.InspectionReportId && x.VesselId == vesselId, cancellationToken)) continue;
             var existing = await db.InspectionReportItems.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.Id == incoming.Id, cancellationToken);

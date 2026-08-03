@@ -90,17 +90,17 @@ public sealed record SynchronizationPayload(
     IReadOnlyList<UserSynchronizationItem> Users,
     IReadOnlyList<UserVesselSynchronizationItem> UserVessels,
     IReadOnlyList<VesselSettingsSynchronizationItem> VesselSettings,
-    IReadOnlyList<MedicineSynchronizationItem> Medicine,
-    IReadOnlyList<MedicineConfigurationSynchronizationItem> MedicineConfiguration,
-    IReadOnlyList<InspectionReportSynchronizationItem> InspectionReports,
-    IReadOnlyList<InspectionReportItemSynchronizationItem> InspectionReportItems,
+    IReadOnlyList<MedicineSynchronizationItem>? Medicine,
+    IReadOnlyList<MedicineConfigurationSynchronizationItem>? MedicineConfiguration,
+    IReadOnlyList<InspectionReportSynchronizationItem>? InspectionReports,
+    IReadOnlyList<InspectionReportItemSynchronizationItem>? InspectionReportItems,
     IReadOnlyList<SynchronizationFileItem> Files)
 {
     public int RecordCount =>
         Vessels.Count + Equipment.Count + Users.Count +
-        UserVessels.Count + VesselSettings.Count + Medicine.Count +
-        MedicineConfiguration.Count + InspectionReports.Count +
-        InspectionReportItems.Count;
+        UserVessels.Count + VesselSettings.Count + (Medicine?.Count ?? 0) +
+        (MedicineConfiguration?.Count ?? 0) + (InspectionReports?.Count ?? 0) +
+        (InspectionReportItems?.Count ?? 0);
 }
 
 public sealed record SynchronizationExchangeRequest(
