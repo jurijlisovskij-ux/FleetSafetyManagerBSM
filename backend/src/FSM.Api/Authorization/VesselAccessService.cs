@@ -24,18 +24,36 @@ public sealed class VesselAccessService(
         ClaimsPrincipal user,
         CancellationToken cancellationToken)
     {
-        var userIdText = user.FindFirstValue(ClaimTypes.NameIdentifier);
-        if (!Guid.TryParse(userIdText, out var userId))
-            return null;
-
         var role = user.FindFirstValue(ClaimTypes.Role);
         var query = db.Vessels.AsNoTracking();
 
-        if (string.Equals(role, "OfficeAdmin", StringComparison.Ordinal))
+        // Office administrators are never assignment-scoped. Check the role
+        // before parsing an identifier so an otherwise valid administrator
+        // token cannot accidentally fall through to an empty assignment list.
+        if (!isShipEdition &&
+            string.Equals(role, "OfficeAdmin", StringComparison.OrdinalIgnoreCase))
         {
             return await query
                 .OrderBy(x => x.VesselName)
                 .ThenBy(x => x.Id)
+                .ToListAsync(cancellationToken);
+        }
+
+        var userIdText = user.FindFirstValue(ClaimTypes.NameIdentifier);
+        if (!Guid.TryParse(userIdText, out var userId))
+            return null;
+
+        if (isShipEdition &&
+            string.Equals(role, "Crew", StringComparison.OrdinalIgnoreCase))
+        {
+            if (!configuredShipVesselId.HasValue)
+                return Array.Empty<Vessel>();
+
+            return await query
+                .Where(vessel => vessel.Id == configuredShipVesselId.Value)
+                .OrderBy(x => x.VesselName)
+                .ThenBy(x => x.Id)
+                .Take(1)
                 .ToListAsync(cancellationToken);
         }
 
@@ -43,22 +61,6 @@ public sealed class VesselAccessService(
             db.UserVessels.Any(assignment =>
                 assignment.UserId == userId &&
                 assignment.VesselId == vessel.Id));
-
-        if (isShipEdition &&
-            string.Equals(role, "Crew", StringComparison.Ordinal))
-        {
-            if (configuredShipVesselId.HasValue)
-            {
-                query = query.Where(
-                    vessel => vessel.Id == configuredShipVesselId.Value);
-            }
-
-            return await query
-                .OrderBy(x => x.VesselName)
-                .ThenBy(x => x.Id)
-                .Take(1)
-                .ToListAsync(cancellationToken);
-        }
 
         return await query
             .OrderBy(x => x.VesselName)

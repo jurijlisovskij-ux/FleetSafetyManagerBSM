@@ -152,14 +152,48 @@ begin
 end;
 
 function PersistentDataSource: string;
+var
+  FindRec: TFindRec;
+  ReleasesPath: string;
+  Candidate: string;
 begin
   Result := CurrentReleasePath;
-  if (Result = '') or (not DirExists(Result)) then
+  if (Result <> '') and FileExists(Result + '\Data\fsm.db') then
+    exit;
+
+  { Some RC19/early-RC20 installs stored persistent data at the install root. }
+  Candidate := ExpandConstant('{app}');
+  if FileExists(Candidate + '\Data\fsm.db') then
   begin
-    Result := LegacyInstallPath;
-    if (Result = '') or (not DirExists(Result)) then
-      Result := '';
+    Result := Candidate;
+    exit;
   end;
+
+  { A stale/missing current.txt must not cause a fresh empty SQLite database. }
+  Result := '';
+  ReleasesPath := ExpandConstant('{app}\Releases');
+  if FindFirst(ReleasesPath + '\RC*_*', FindRec) then
+  begin
+    try
+      repeat
+        if (FindRec.Attributes and FILE_ATTRIBUTE_DIRECTORY) <> 0 then
+        begin
+          Candidate := ReleasesPath + '\' + FindRec.Name;
+          if FileExists(Candidate + '\Data\fsm.db') then
+            Result := Candidate;
+        end;
+      until not FindNext(FindRec);
+    finally
+      FindClose(FindRec);
+    end;
+  end;
+
+  if Result <> '' then
+    exit;
+
+  Result := LegacyInstallPath;
+  if (Result = '') or (not FileExists(Result + '\Data\fsm.db')) then
+    Result := '';
 end;
 
 procedure CopyPersistentData(const OldReleasePath, NewReleasePath: string);

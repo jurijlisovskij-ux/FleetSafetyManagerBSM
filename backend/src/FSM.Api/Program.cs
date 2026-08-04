@@ -31,9 +31,12 @@ builder.Services.AddCors(options =>
         policy.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod());
 });
 
+var configuredConnection = builder.Configuration.GetConnectionString("DefaultConnection")
+    ?? throw new InvalidOperationException("Default database connection is missing.");
+var resolvedConnection = DatabaseConnectionResolver.Resolve(
+    configuredConnection, AppContext.BaseDirectory);
 builder.Services.AddDbContext<FsmDbContext>(options =>
-    options.UseSqlite(
-        builder.Configuration.GetConnectionString("DefaultConnection")));
+    options.UseSqlite(resolvedConnection));
 
 builder.Services.AddSingleton<JwtTokenService>();
 builder.Services.AddSingleton<DocumentStorageService>();
