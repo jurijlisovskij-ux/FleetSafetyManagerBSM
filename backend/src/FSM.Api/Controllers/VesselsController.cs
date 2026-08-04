@@ -92,21 +92,42 @@ public sealed class VesselsController(
         };
 
         db.Vessels.Add(vessel);
-        await db.SaveChangesAsync(cancellationToken);
+        var savedRecords = await db.SaveChangesAsync(cancellationToken);
+        if (savedRecords < 1)
+        {
+            return StatusCode(StatusCodes.Status500InternalServerError, new
+            {
+                message = "The vessel was not written to the database."
+            });
+        }
+
+        // Do not report a successful create until SQLite can read the row
+        // back independently of the DbContext change tracker.
+        var persisted = await db.Vessels
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == vessel.Id, cancellationToken);
+        if (persisted is null || persisted.IsDeleted)
+        {
+            return StatusCode(StatusCodes.Status500InternalServerError, new
+            {
+                message = "The vessel could not be read back from the database after saving."
+            });
+        }
 
         return Created(
-            $"/api/vessels/{vessel.Id}",
+            $"/api/vessels/{persisted.Id}",
             new
             {
-                vessel.Id,
-                vessel.VesselName,
-                vessel.ImoNumber,
-                vessel.Flag,
-                vessel.CompanyName,
-                vessel.InvoicingDetails,
-                vessel.AccountingEmail,
+                persisted.Id,
+                persisted.VesselName,
+                persisted.ImoNumber,
+                persisted.Flag,
+                persisted.CompanyName,
+                persisted.InvoicingDetails,
+                persisted.AccountingEmail,
                 DisplayName =
-                    $"{vessel.VesselName} (IMO {vessel.ImoNumber})"
+                    $"{persisted.VesselName} (IMO {persisted.ImoNumber})"
             });
     }
 

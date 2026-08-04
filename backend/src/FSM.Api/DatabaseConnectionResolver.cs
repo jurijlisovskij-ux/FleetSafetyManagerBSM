@@ -8,11 +8,12 @@ public static class DatabaseConnectionResolver
     {
         var builder = new SqliteConnectionStringBuilder(connectionString);
         if (string.IsNullOrWhiteSpace(builder.DataSource) ||
-            builder.DataSource.Equals(":memory:", StringComparison.OrdinalIgnoreCase) ||
-            Path.IsPathRooted(builder.DataSource))
+            builder.DataSource.Equals(":memory:", StringComparison.OrdinalIgnoreCase))
             return connectionString;
 
-        var intendedPath = Path.GetFullPath(Path.Combine(applicationDirectory, builder.DataSource));
+        var intendedPath = Path.GetFullPath(Path.IsPathRooted(builder.DataSource)
+            ? builder.DataSource
+            : Path.Combine(applicationDirectory, builder.DataSource));
         if (!File.Exists(intendedPath))
         {
             var existing = FindExistingDatabase(applicationDirectory, intendedPath);

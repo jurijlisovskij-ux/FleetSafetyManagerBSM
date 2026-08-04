@@ -9,6 +9,7 @@ function Assert-Contains([string]$Path, [string]$Pattern, [string]$Scenario) {
 
 Write-Host "RC20 permanent pilot validation suite"
 & (Join-Path $PSScriptRoot "test-rc20-020-vessel-authorization.ps1")
+& (Join-Path $PSScriptRoot "test-rc20-021-fresh-vessel.ps1")
 & (Join-Path $PSScriptRoot "test-equipment-editing.ps1")
 & (Join-Path $PSScriptRoot "test-desktop-launcher.ps1")
 
