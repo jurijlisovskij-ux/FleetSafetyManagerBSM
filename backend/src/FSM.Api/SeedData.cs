@@ -16,6 +16,7 @@ public static class SeedData
         {
             Id = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"),
             FullName = "Office Administrator",
+            Username = "admin@fsm.local",
             Email = "admin@fsm.local",
             PasswordHash = PasswordHasher.Hash("Admin123!"),
             Role = UserRole.OfficeAdmin
@@ -25,6 +26,7 @@ public static class SeedData
         {
             Id = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"),
             FullName = "Technical Superintendent",
+            Username = "superintendent@fsm.local",
             Email = "superintendent@fsm.local",
             PasswordHash = PasswordHasher.Hash("Super123!"),
             Role = UserRole.Superintendent
@@ -34,6 +36,7 @@ public static class SeedData
         {
             Id = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc"),
             FullName = "Vessel Crew",
+            Username = "crew@fsm.local",
             Email = "crew@fsm.local",
             PasswordHash = PasswordHasher.Hash("Crew123!"),
             Role = UserRole.Crew

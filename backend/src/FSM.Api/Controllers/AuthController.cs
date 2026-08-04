@@ -9,7 +9,7 @@ using Microsoft.EntityFrameworkCore;
 
 namespace FSM.Api.Controllers;
 
-public sealed record LoginRequest(string Email, string Password);
+public sealed record LoginRequest(string? Username, string Password, string? Email = null);
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
 
 [ApiController]
@@ -26,29 +26,32 @@ public sealed class AuthController(
         LoginRequest request,
         CancellationToken cancellationToken)
     {
-        if (string.IsNullOrWhiteSpace(request.Email) ||
+        var suppliedUsername = string.IsNullOrWhiteSpace(request.Username)
+            ? request.Email
+            : request.Username;
+        if (string.IsNullOrWhiteSpace(suppliedUsername) ||
             string.IsNullOrWhiteSpace(request.Password))
         {
-            return Unauthorized(new { message = "Invalid email or password." });
+            return Unauthorized(new { message = "Invalid username or password." });
         }
 
-        var email = request.Email.Trim().ToLowerInvariant();
+        var username = suppliedUsername.Trim().ToLowerInvariant();
 
         var user = await db.Users
             .SingleOrDefaultAsync(
-                x => x.Email.ToLower() == email,
+                x => x.Username.ToLower() == username,
                 cancellationToken);
 
         if (user is null || !user.IsActive || user.IsLocked)
         {
-            return Unauthorized(new { message = "Invalid email or password." });
+            return Unauthorized(new { message = "Invalid username or password." });
         }
         if (!PasswordHasher.Verify(request.Password, user.PasswordHash))
         {
             user.FailedLoginAttempts++;
             if (user.FailedLoginAttempts >= 5) user.IsLocked = true;
             await db.SaveChangesAsync(cancellationToken);
-            return Unauthorized(new { message = "Invalid email or password." });
+            return Unauthorized(new { message = "Invalid username or password." });
         }
         user.FailedLoginAttempts = 0;
         await db.SaveChangesAsync(cancellationToken);
@@ -73,6 +76,7 @@ public sealed class AuthController(
         {
             token = jwtTokenService.Create(user),
             userId = user.Id,
+            user.Username,
             user.FullName,
             user.Email,
             role = user.Role.ToString(),
@@ -101,7 +105,7 @@ public sealed class AuthController(
             return BadRequest(new { message = "New password must contain at least 8 characters." });
         user.PasswordHash = PasswordHasher.Hash(request.NewPassword);
         user.ForcePasswordChange = false;
-        audit.Add("Password changed", user.Email, user.Email);
+        audit.Add("Password changed", user.Username, user.Username);
         await db.SaveChangesAsync(cancellationToken);
         return Ok(new { message = "Password changed successfully." });
     }
@@ -142,8 +146,8 @@ public sealed class AuthController(
         admin.IsLocked = false;
         admin.FailedLoginAttempts = 0;
         admin.ForcePasswordChange = false;
-        audit.Add("Emergency recovery", "Local recovery key", admin.Email);
-        audit.Add("Administrator recovery", "Local recovery key", admin.Email);
+        audit.Add("Emergency recovery", "Local recovery key", admin.Username);
+        audit.Add("Administrator recovery", "Local recovery key", admin.Username);
         await db.SaveChangesAsync(cancellationToken);
         return Ok(new { message = "Administrator password recovered successfully." });
     }

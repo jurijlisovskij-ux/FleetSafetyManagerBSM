@@ -101,6 +101,7 @@ public sealed class SynchronizationExchangeService(
             .Select(x => new UserSynchronizationItem(
                 x.Id,
                 x.FullName,
+                x.Username,
                 x.Email,
                 x.PasswordHash,
                 x.Role,
@@ -313,13 +314,15 @@ public sealed class SynchronizationExchangeService(
             {
                 Id = incoming.Id,
                 FullName = incoming.FullName,
-                Email = incoming.Email,
+                Username = incoming.Username ?? incoming.Email ?? incoming.Id.ToString("N"),
+                Email = incoming.Email ?? string.Empty,
                 PasswordHash = incoming.PasswordHash
             };
             if (db.Entry(existing).State == EntityState.Detached)
                 db.Users.Add(existing);
             existing.FullName = incoming.FullName;
-            existing.Email = incoming.Email;
+            existing.Username = incoming.Username ?? incoming.Email ?? existing.Username;
+            existing.Email = incoming.Email ?? string.Empty;
             existing.PasswordHash = incoming.PasswordHash;
             existing.Role = incoming.Role;
             existing.IsActive = incoming.IsActive;

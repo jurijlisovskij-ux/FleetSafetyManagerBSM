@@ -34,6 +34,7 @@ public static class SchemaUpgrade
             await AddColumnIfMissingAsync(db, "users", "ForcePasswordChange", "INTEGER NOT NULL DEFAULT 0");
             await AddColumnIfMissingAsync(db, "users", "IsLocked", "INTEGER NOT NULL DEFAULT 0");
             await AddColumnIfMissingAsync(db, "users", "FailedLoginAttempts", "INTEGER NOT NULL DEFAULT 0");
+            await UpgradeUserIdentityAsync(db);
             await CreateSynchronizationTablesAsync(db);
             await CreateSecurityTablesAsync(db);
             await CreateMedicineTablesAsync(db);
@@ -43,6 +44,19 @@ public static class SchemaUpgrade
         {
             await db.Database.CloseConnectionAsync();
         }
+    }
+
+    private static async Task UpgradeUserIdentityAsync(FsmDbContext db)
+    {
+        await AddColumnIfMissingAsync(db, "users", "Username", "TEXT");
+        await db.Database.ExecuteSqlRawAsync("""
+            UPDATE users SET Username = Email
+            WHERE Username IS NULL OR TRIM(Username) = '';
+            DROP INDEX IF EXISTS IX_users_Email;
+            DROP INDEX IF EXISTS IX_users_Username;
+            CREATE UNIQUE INDEX IX_users_Username
+              ON users(Username COLLATE NOCASE);
+            """);
     }
 
     private static async Task CreateInspectionTablesAsync(FsmDbContext db)

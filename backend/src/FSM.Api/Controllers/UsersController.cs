@@ -11,7 +11,8 @@ namespace FSM.Api.Controllers;
 
 public sealed record SaveUserRequest(
     string FullName,
-    string Email,
+    string? Username,
+    string? Email,
     UserRole Role,
     bool IsActive,
     string? Password,
@@ -35,6 +36,7 @@ public sealed class UsersController(FsmDbContext db, AuditService audit) : Contr
             {
                 x.Id,
                 x.FullName,
+                x.Username,
                 x.Email,
                 Role = x.Role.ToString(),
                 x.IsActive,
@@ -75,7 +77,8 @@ public sealed class UsersController(FsmDbContext db, AuditService audit) : Contr
         {
             Id = Guid.NewGuid(),
             FullName = request.FullName.Trim(),
-            Email = request.Email.Trim().ToLowerInvariant(),
+            Username = GetUsername(request),
+            Email = NormalizeEmail(request.Email),
             PasswordHash =
                 PasswordHasher.Hash(request.Password),
             Role = request.Role,
@@ -98,7 +101,7 @@ public sealed class UsersController(FsmDbContext db, AuditService audit) : Contr
         }
 
         await db.SaveChangesAsync(cancellationToken);
-        audit.Add("User created", User.Identity?.Name ?? "OfficeAdmin", user.Email);
+        audit.Add("User created", User.Identity?.Name ?? "OfficeAdmin", user.Username);
         await db.SaveChangesAsync(cancellationToken);
 
         return Created(
@@ -129,8 +132,8 @@ public sealed class UsersController(FsmDbContext db, AuditService audit) : Contr
             return validation;
 
         user.FullName = request.FullName.Trim();
-        user.Email =
-            request.Email.Trim().ToLowerInvariant();
+        user.Username = GetUsername(request);
+        user.Email = NormalizeEmail(request.Email);
         user.Role = request.Role;
         user.IsActive = request.IsActive;
 
@@ -176,7 +179,7 @@ public sealed class UsersController(FsmDbContext db, AuditService audit) : Contr
 
         await db.SaveChangesAsync(cancellationToken);
         audit.Add(request.IsActive ? "User enabled" : "User disabled",
-            User.Identity?.Name ?? "OfficeAdmin", user.Email);
+            User.Identity?.Name ?? "OfficeAdmin", user.Username);
         await db.SaveChangesAsync(cancellationToken);
 
         return Ok(ToResponse(
@@ -198,7 +201,7 @@ public sealed class UsersController(FsmDbContext db, AuditService audit) : Contr
         user.ForcePasswordChange = request.TemporaryPassword;
         user.IsLocked = false;
         user.FailedLoginAttempts = 0;
-        audit.Add("Password reset", User.Identity?.Name ?? "OfficeAdmin", user.Email);
+        audit.Add("Password reset", User.Identity?.Name ?? "OfficeAdmin", user.Username);
         await db.SaveChangesAsync(cancellationToken);
         return Ok(new { message = "Password reset successfully.", user.ForcePasswordChange });
     }
@@ -210,7 +213,7 @@ public sealed class UsersController(FsmDbContext db, AuditService audit) : Contr
         if (user is null) return NotFound();
         user.IsLocked = false;
         user.FailedLoginAttempts = 0;
-        audit.Add("Account unlocked", User.Identity?.Name ?? "OfficeAdmin", user.Email);
+        audit.Add("Account unlocked", User.Identity?.Name ?? "OfficeAdmin", user.Username);
         await db.SaveChangesAsync(cancellationToken);
         return Ok(new { message = "Account unlocked." });
     }
@@ -228,30 +231,29 @@ public sealed class UsersController(FsmDbContext db, AuditService audit) : Contr
             });
         }
 
-        var email = request.Email.Trim();
-
-        if (string.IsNullOrWhiteSpace(email) ||
-            !email.Contains('@'))
+        var username = GetUsername(request);
+        if (string.IsNullOrWhiteSpace(username))
         {
             return BadRequest(new
             {
-                message =
-                    "A valid Email is required."
+                message = "Username is required."
             });
         }
 
         if (await db.Users.AnyAsync(
             x => x.Id != existingUserId &&
-                 x.Email.ToLower() ==
-                    email.ToLower(),
+                 x.Username.ToLower() == username.ToLower(),
             cancellationToken))
         {
             return Conflict(new
             {
-                message =
-                    "A user with this Email already exists."
+                message = "A user with this Username already exists."
             });
         }
+
+        var email = request.Email?.Trim();
+        if (!string.IsNullOrWhiteSpace(email) && !email.Contains('@'))
+            return BadRequest(new { message = "Enter a valid Email or leave it empty." });
 
         if (request.Role != UserRole.OfficeAdmin)
         {
@@ -284,11 +286,19 @@ public sealed class UsersController(FsmDbContext db, AuditService audit) : Contr
         {
             user.Id,
             user.FullName,
-            user.Email,
+            user.Username,
+            Email = string.IsNullOrWhiteSpace(user.Email) ? null : user.Email,
             Role = user.Role.ToString(),
             user.IsActive,
             user.IsLocked,
             user.ForcePasswordChange,
             VesselIds = vesselIds.Distinct().ToList()
         };
+
+    private static string NormalizeEmail(string? email) =>
+        string.IsNullOrWhiteSpace(email) ? string.Empty : email.Trim().ToLowerInvariant();
+
+    private static string GetUsername(SaveUserRequest request) =>
+        (string.IsNullOrWhiteSpace(request.Username) ? request.Email : request.Username)?.Trim()
+        ?? string.Empty;
 }

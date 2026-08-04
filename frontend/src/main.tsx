@@ -8,8 +8,9 @@ const apiBaseUrl =
 type LoginResult = {
   token: string;
   userId: string;
+  username: string;
   fullName: string;
-  email: string;
+  email?: string;
   role: "OfficeAdmin" | "Superintendent" | "Crew";
   edition: "Office" | "Ship";
   forcePasswordChange: boolean;
@@ -19,7 +20,8 @@ type LoginResult = {
 type ManagedUser = {
   id: string;
   fullName: string;
-  email: string;
+  username: string;
+  email?: string;
   role: LoginResult["role"];
   isActive: boolean;
   isLocked: boolean;
@@ -210,7 +212,7 @@ function inspectionToApi(value: Equipment["inspectionBy"]) {
 }
 
 function App() {
-  const [email, setEmail] = useState("superintendent@fsm.local");
+  const [username, setUsername] = useState("superintendent@fsm.local");
   const [password, setPassword] = useState("Super123!");
   const [user, setUser] = useState<LoginResult | null>(null);
   const [vessels, setVessels] = useState<Vessel[]>([]);
@@ -326,7 +328,7 @@ function App() {
               const response = await fetch(`${apiBaseUrl}/auth/login`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ email, password }),
+                body: JSON.stringify({ username, password }),
               });
 
               if (!response.ok) {
@@ -344,7 +346,7 @@ function App() {
         >
           <h1>Fleet Safety Manager</h1>
           {error && <div className="error">{error}</div>}
-          <label>Email<input value={email} onChange={e => setEmail(e.target.value)} /></label>
+          <label>Username<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" /></label>
           <label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} /></label>
           <button className="primary" disabled={busy}>
             {busy ? "Signing in..." : "Sign In"}
@@ -1560,6 +1562,7 @@ function UserAdministrationDialog({
   const emptyDraft = {
     id: "",
     fullName: "",
+    username: "",
     email: "",
     role: "Crew" as LoginResult["role"],
     isActive: true,
@@ -1622,7 +1625,8 @@ function UserAdministrationDialog({
     setDraft({
       id: item.id,
       fullName: item.fullName,
-      email: item.email,
+      username: item.username,
+      email: item.email ?? "",
       role: item.role,
       isActive: item.isActive,
       password: "",
@@ -1644,9 +1648,9 @@ function UserAdministrationDialog({
       return;
     }
 
-    if (!draft.email.trim()) {
+    if (!draft.username.trim()) {
       setAdministrationError(
-        "Email is required.",
+        "Username is required.",
       );
       return;
     }
@@ -1674,7 +1678,8 @@ function UserAdministrationDialog({
           },
           body: JSON.stringify({
             fullName: draft.fullName.trim(),
-            email: draft.email.trim(),
+            username: draft.username.trim(),
+            email: draft.email.trim() || null,
             role:
               draft.role === "OfficeAdmin"
                 ? 0
@@ -1830,7 +1835,8 @@ function UserAdministrationDialog({
                 onClick={() => selectUser(item)}
               >
                 <strong>{item.fullName}</strong>
-                <span>{item.email}</span>
+                <span>{item.username}</span>
+                {item.email && <small>{item.email}</small>}
                 <small>
                   {item.role}
                   {!item.isActive
@@ -1861,7 +1867,19 @@ function UserAdministrationDialog({
             </label>
 
             <label>
-              Email *
+              Username *
+              <input
+                value={draft.username}
+                onChange={event =>
+                  setDraft(current => ({
+                    ...current,
+                    username: event.target.value,
+                  }))}
+              />
+            </label>
+
+            <label>
+              Email (optional)
               <input
                 type="email"
                 value={draft.email}

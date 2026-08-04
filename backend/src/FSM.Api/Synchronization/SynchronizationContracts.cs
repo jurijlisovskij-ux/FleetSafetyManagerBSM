@@ -36,7 +36,8 @@ public sealed record EquipmentSynchronizationItem(
 public sealed record UserSynchronizationItem(
     Guid Id,
     string FullName,
-    string Email,
+    string? Username,
+    string? Email,
     string PasswordHash,
     UserRole Role,
     bool IsActive,

@@ -53,8 +53,41 @@ try {
 
     $started = Start-TestApi; $process = $started[0]; $baseUrl = $started[1]
     Assert-True ((Test-Path $databasePath) -and (Get-Item $databasePath).Length -gt 0) "Fresh SQLite database was not created at the configured path."
+    Stop-TestApi $process; $process = $null
+    python (Join-Path $PSScriptRoot "prepare_rc20_022_legacy_db.py") $databasePath
+    if ($LASTEXITCODE -ne 0) { throw "Unable to prepare the legacy Email-identity database fixture." }
+    $started = Start-TestApi; $process = $started[0]; $baseUrl = $started[1]
     $login = Invoke-Json Post "$baseUrl/api/auth/login" @{} @{ email = "admin@fsm.local"; password = "Admin123!" }
     $headers = @{ Authorization = "Bearer $($login.token)" }
+    Assert-True ($login.username -eq "admin@fsm.local") "Existing user Username was not migrated from Email."
+    $firstUser = Invoke-Json Post "$baseUrl/api/users" $headers @{
+        fullName = "Duplicate Email One"; username = "duplicate-one"
+        email = "shared@fsm.local"; role = 1; isActive = $true
+        password = "Duplicate123!"; vesselIds = @(); forcePasswordChange = $false
+    }
+    $secondUser = Invoke-Json Post "$baseUrl/api/users" $headers @{
+        fullName = "Duplicate Email Two"; username = "duplicate-two"
+        email = "shared@fsm.local"; role = 1; isActive = $true
+        password = "Duplicate123!"; vesselIds = @(); forcePasswordChange = $false
+    }
+    $noEmailUser = Invoke-Json Post "$baseUrl/api/users" $headers @{
+        fullName = "No Email User"; username = "no-email-user"
+        email = $null; role = 1; isActive = $true
+        password = "Duplicate123!"; vesselIds = @(); forcePasswordChange = $false
+    }
+    Assert-True ($firstUser.username -eq "duplicate-one" -and $secondUser.username -eq "duplicate-two") "Unique usernames were not persisted."
+    Assert-True ($firstUser.email -eq $secondUser.email) "Duplicate optional email addresses must be accepted."
+    Assert-True ($null -eq $noEmailUser.email) "Email must be optional."
+    $usernameLogin = Invoke-Json Post "$baseUrl/api/auth/login" @{} @{ username = "duplicate-one"; password = "Duplicate123!" }
+    Assert-True ($usernameLogin.username -eq "duplicate-one") "Authentication did not use Username."
+    Invoke-Json Post "$baseUrl/api/users/$($firstUser.id)/reset-password" $headers @{
+        password = "ResetDuplicate123!"; temporaryPassword = $false
+    } | Out-Null
+    $auditEntries = @(Invoke-Json Get "$baseUrl/api/audit" $headers)
+    $passwordResetAudit = @($auditEntries | Where-Object {
+        $_.action -eq "Password reset" -and $_.targetUser -eq "duplicate-one"
+    })
+    Assert-True ($passwordResetAudit.Count -gt 0) "Password reset audit target must use Username."
     $created = Invoke-Json Post "$baseUrl/api/vessels" $headers @{ vesselName = "MV FRESH DATABASE"; imoNumber = "9123456"; flag = "Lithuania" }
     Assert-True (-not [string]::IsNullOrWhiteSpace($created.id)) "POST did not return the persisted vessel ID."
 
@@ -73,7 +106,7 @@ try {
     $persistedDashboard = Invoke-Json Get "$baseUrl/api/dashboard" $headers
     Assert-True ($persisted.Count -eq 1 -and $persisted[0].id -eq $created.id) "Vessel did not persist after backend restart."
     Assert-True ($persistedDashboard.vessels -eq 1 -and @($persistedDashboard.vesselRows).Count -eq 1) "Dashboard/Fleet Status lost the vessel after restart."
-    Write-Host "RC20-021 fresh SQLite Create Vessel workflow passed."
+    Write-Host "RC20-021/022 fresh SQLite and Username migration workflows passed."
 }
 finally {
     Stop-TestApi $process
