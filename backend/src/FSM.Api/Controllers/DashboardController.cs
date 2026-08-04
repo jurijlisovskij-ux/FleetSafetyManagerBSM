@@ -5,6 +5,7 @@ using FSM.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 
 namespace FSM.Api.Controllers;
 
@@ -89,6 +90,54 @@ public sealed class DashboardController(
             })
             .ToList();
 
+        var technicalSuperintendents = new List<object>();
+        if (string.Equals(
+            User.FindFirstValue(ClaimTypes.Role),
+            UserRole.OfficeAdmin.ToString(),
+            StringComparison.OrdinalIgnoreCase))
+        {
+            var superintendents = await db.Users.AsNoTracking()
+                .Where(x => x.Role == UserRole.Superintendent)
+                .OrderBy(x => x.FullName)
+                .ThenBy(x => x.Username)
+                .Select(x => new
+                {
+                    x.Id,
+                    x.FullName,
+                    VesselIds = x.VesselAssignments
+                        .Select(a => a.VesselId)
+                        .ToList()
+                })
+                .ToListAsync(cancellationToken);
+
+            foreach (var superintendent in superintendents)
+            {
+                var assignedIds = superintendent.VesselIds.ToHashSet();
+                var assignedStatuses = statuses
+                    .Where(x => assignedIds.Contains(x.Item.VesselId))
+                    .ToList();
+                technicalSuperintendents.Add(new
+                {
+                    superintendent.Id,
+                    superintendent.FullName,
+                    VesselCount = assignedIds.Count,
+                    Soon = assignedStatuses.Count(x =>
+                        x.Status == EquipmentStatus.Soon),
+                    Overdue = assignedStatuses.Count(x =>
+                        x.Status == EquipmentStatus.Overdue),
+                    Vessels = vessels
+                        .Where(x => assignedIds.Contains(x.Id))
+                        .Select(x => new
+                        {
+                            x.Id,
+                            x.VesselName,
+                            x.ImoNumber
+                        })
+                        .ToList()
+                });
+            }
+        }
+
         return Ok(new
         {
             Vessels = vessels.Count,
@@ -98,6 +147,7 @@ public sealed class DashboardController(
             Overdue = statuses.Count(x => x.Status == EquipmentStatus.Overdue),
             VesselRows = vesselRows,
             Upcoming = upcoming,
+            TechnicalSuperintendents = technicalSuperintendents,
             Synchronization = synchronization
         });
     }

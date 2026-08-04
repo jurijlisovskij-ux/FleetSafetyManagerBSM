@@ -100,7 +100,21 @@ type DashboardData = {
   overdue: number;
   vesselRows: DashboardVesselRow[];
   upcoming: DashboardUpcoming[];
+  technicalSuperintendents: DashboardTechnicalSuperintendent[];
   synchronization: SynchronizationStatus[];
+};
+
+type DashboardTechnicalSuperintendent = {
+  id: string;
+  fullName: string;
+  vesselCount: number;
+  soon: number;
+  overdue: number;
+  vessels: Array<{
+    id: string;
+    vesselName: string;
+    imoNumber: string;
+  }>;
 };
 
 type MedicineItem = {
@@ -219,6 +233,8 @@ function App() {
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [dashboardFilter, setDashboardFilter] =
     useState<"All" | "OK" | "Soon" | "Overdue">("All");
+  const [selectedSuperintendentId, setSelectedSuperintendentId] =
+    useState<string | null>(null);
   const [currentVessel, setCurrentVessel] = useState<Vessel | null>(null);
   const [equipment, setEquipment] = useState<Equipment[]>([]);
   const [selected, setSelected] = useState<Equipment | null>(null);
@@ -521,6 +537,48 @@ function App() {
                 </div>}
           </section>
 
+          {user.role === "OfficeAdmin" ? (
+          <section className="dashboard-section">
+            <div className="dashboard-section-heading">
+              <h2>Technical Superintendents</h2>
+              <span className="muted">Select a Superintendent to view assigned vessels.</span>
+            </div>
+            <div className="dashboard-table-wrap">
+              <table className="dashboard-table technical-superintendents-table">
+                <thead><tr><th>Full Name</th><th>Assigned Vessels</th><th>Soon</th><th>Overdue</th></tr></thead>
+                <tbody>
+                  {(dashboard?.technicalSuperintendents ?? []).map(item => (
+                    <React.Fragment key={item.id}>
+                      <tr className={selectedSuperintendentId === item.id ? "selected-row" : ""}
+                        onClick={() => setSelectedSuperintendentId(current => current === item.id ? null : item.id)}>
+                        <td><strong>{item.fullName}</strong></td>
+                        <td>{item.vesselCount}</td>
+                        <td className="status-soon-text">{item.soon}</td>
+                        <td className="status-overdue-text">{item.overdue}</td>
+                      </tr>
+                      {selectedSuperintendentId === item.id &&
+                        <tr className="superintendent-vessels-row"><td colSpan={4}>
+                          {item.vessels.length === 0
+                            ? <span className="muted">No vessels assigned.</span>
+                            : <div className="superintendent-vessels">
+                                {item.vessels.map(assigned => (
+                                  <button key={assigned.id} onClick={() => {
+                                    const vessel = vessels.find(value => value.id === assigned.id);
+                                    if (vessel) setCurrentVessel(vessel);
+                                  }}>
+                                    <strong>{assigned.vesselName}</strong>
+                                    <small>IMO {assigned.imoNumber}</small>
+                                  </button>
+                                ))}
+                              </div>}
+                        </td></tr>}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+          ) : (
           <section className="dashboard-section">
             <div className="dashboard-section-heading">
               <h2>Upcoming Inspections</h2>
@@ -576,6 +634,7 @@ function App() {
               </table>
             </div>
           </section>
+          )}
 
           {user.edition === "Office" &&
             <section className="dashboard-section">

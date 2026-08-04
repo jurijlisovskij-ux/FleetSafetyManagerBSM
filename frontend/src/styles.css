@@ -901,3 +901,22 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 }
+.superintendent-vessels-row > td {
+  padding: 14px;
+  background: #f7f9fc;
+}
+
+.superintendent-vessels {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}
+
+.superintendent-vessels button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  padding: 12px;
+  text-align: left;
+}

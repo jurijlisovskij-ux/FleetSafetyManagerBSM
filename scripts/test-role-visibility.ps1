@@ -496,6 +496,16 @@ try {
     Assert-True (
         @($adminDashboard.upcoming | Where-Object vesselId -eq $secondVesselId).Count -eq 1) `
         "System Administrator Upcoming Inspections must include the new vessel."
+    $technicalSuperintendent = @($adminDashboard.technicalSuperintendents |
+        Where-Object fullName -eq "Technical Superintendent")[0]
+    Assert-True ($null -ne $technicalSuperintendent) `
+        "Office dashboard must list every Technical Superintendent."
+    Assert-True ($technicalSuperintendent.vesselCount -eq 2 -and
+        @($technicalSuperintendent.vessels).Count -eq 2) `
+        "Technical Superintendent vessel counts and assigned vessel details must match."
+    Assert-True ($technicalSuperintendent.soon -eq 0 -and
+        $technicalSuperintendent.overdue -eq 1) `
+        "Technical Superintendent Soon and Overdue counts must use assigned equipment only."
 
     Stop-FsmApi $process
     $process = $null
@@ -598,6 +608,10 @@ try {
     Assert-True (
         @($superintendentDashboard.upcoming | Where-Object vesselId -ne $secondVesselId).Count -eq 0) `
         "Superintendent Upcoming Inspections exposed an unauthorized vessel."
+    Assert-True (@($superintendentDashboard.upcoming).Count -eq 1) `
+        "Superintendent dashboard must retain Upcoming Inspections."
+    Assert-True (@($superintendentDashboard.technicalSuperintendents).Count -eq 0) `
+        "Technical Superintendents must be an Office Administrator dashboard feature only."
     Assert-True (
         (Get-StatusCode `
             -Uri "$baseUrl/api/vessels/$balticVesselId/equipment" `
@@ -640,6 +654,10 @@ try {
     Assert-True (
         @($crewDashboard.upcoming | Where-Object vesselId -ne $secondVesselId).Count -eq 0) `
         "Ship Crew Upcoming Inspections exposed a non-local vessel."
+    Assert-True (@($crewDashboard.upcoming).Count -eq 1) `
+        "Ship dashboard must retain Upcoming Inspections."
+    Assert-True (@($crewDashboard.technicalSuperintendents).Count -eq 0) `
+        "Technical Superintendents must not be returned to the Ship dashboard."
     Assert-True (
         (Get-StatusCode `
             -Uri "$baseUrl/api/vessels/$balticVesselId/equipment" `
@@ -657,6 +675,20 @@ try {
     }
     Assert-True (-not ([Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($newKey))).Contains($adminPassword)) `
         "Recovery file must not contain a readable password."
+
+    $dashboardSource = Get-Content `
+        -LiteralPath (Join-Path $root "frontend\src\main.tsx") `
+        -Raw
+    Assert-True ($dashboardSource.Contains('<h2>Fleet Status</h2>')) `
+        "Fleet Inspection Status panel must remain present."
+    Assert-True ($dashboardSource.Contains('<h2>Technical Superintendents</h2>')) `
+        "Office dashboard must render the Technical Superintendents panel."
+    Assert-True ($dashboardSource.Contains('setSelectedSuperintendentId(current =>')) `
+        "Clicking a Technical Superintendent must reveal that Superintendent's vessels."
+    Assert-True ($dashboardSource.Contains('if (vessel) setCurrentVessel(vessel);')) `
+        "Clicking an assigned vessel must open the existing Equipment Register."
+    Assert-True ($dashboardSource -match '(?s)\)\s*:\s*\(\s*<section className="dashboard-section">.*?<h2>Upcoming Inspections</h2>') `
+        "Non-Office dashboards must retain the existing Upcoming Inspections panel."
 
     Write-Host "Role visibility integration tests passed."
     Write-Host "  System Administrator: all vessels and fleet totals"
