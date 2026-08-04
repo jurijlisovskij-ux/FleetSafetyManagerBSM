@@ -330,6 +330,7 @@ function App() {
 
   const singleVesselDashboard =
     (dashboard?.vesselRows.length ?? 0) === 1;
+  const showUpcomingVesselColumn = user?.role === "OfficeAdmin";
 
   if (!user) {
     return (
@@ -599,13 +600,12 @@ function App() {
               <table className="dashboard-table">
                 <thead>
                   <tr>
-                    {!singleVesselDashboard &&
+                    {showUpcomingVesselColumn &&
                       <th>Vessel</th>}
                     <th>Equipment</th>
                     <th>Category</th>
                     <th>Expiry Date</th>
-                    {!singleVesselDashboard &&
-                      <th>Days Left</th>}
+                    <th>Days Left</th>
                     <th>Status</th>
                   </tr>
                 </thead>
@@ -620,13 +620,12 @@ function App() {
                           if (vessel) setCurrentVessel(vessel);
                         }}
                       >
-                        {!singleVesselDashboard &&
+                        {showUpcomingVesselColumn &&
                           <td>{item.vesselName}</td>}
                         <td>{item.equipmentName}</td>
                         <td>{item.category}</td>
                         <td>{formatDate(item.expiryDate)}</td>
-                        {!singleVesselDashboard &&
-                          <td>{item.daysLeft}</td>}
+                        <td>{item.daysLeft}</td>
                         <td><span className={`status ${item.status.toLowerCase()}`}>{item.status}</span></td>
                       </tr>
                     ))}

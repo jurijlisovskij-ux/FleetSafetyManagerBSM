@@ -689,6 +689,21 @@ try {
         "Clicking an assigned vessel must open the existing Equipment Register."
     Assert-True ($dashboardSource -match '(?s)\)\s*:\s*\(\s*<section className="dashboard-section">.*?<h2>Upcoming Inspections</h2>') `
         "Non-Office dashboards must retain the existing Upcoming Inspections panel."
+    Assert-True ($dashboardSource.Contains('const showUpcomingVesselColumn = user?.role === "OfficeAdmin";')) `
+        "Upcoming Inspections must show the Vessel column for Office Administrator only."
+    Assert-True (([regex]::Matches(
+        $dashboardSource,
+        'showUpcomingVesselColumn &&')).Count -eq 2) `
+        "The Upcoming Inspections Vessel header and row cell must use the same role rule."
+    Assert-True ($dashboardSource.Contains('<th>Days Left</th>') -and
+        $dashboardSource.Contains('<td>{item.daysLeft}</td>')) `
+        "Days Left must remain visible after the Vessel column is removed."
+    Assert-True ($dashboardSource.Contains('.filter(item => dashboardFilter === "All" || item.status === dashboardFilter)')) `
+        "Upcoming Inspections status filtering must remain unchanged."
+    Assert-True ($dashboardSource.Contains('className={`status ${item.status.toLowerCase()}`}')) `
+        "Upcoming Inspections status values and colours must remain unchanged."
+    Assert-True ($dashboardSource.Contains('const vessel = vessels.find(value => value.id === item.vesselId);')) `
+        "Clicking Upcoming Inspections equipment must continue opening its Equipment Register."
 
     Write-Host "Role visibility integration tests passed."
     Write-Host "  System Administrator: all vessels and fleet totals"
