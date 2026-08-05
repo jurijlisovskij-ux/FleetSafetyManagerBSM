@@ -32,13 +32,17 @@ if (Get-Service "FleetSafetyManager" -ErrorAction SilentlyContinue) {
     Start-Sleep -Seconds 2
 }
 
+$listenHost = if ($Edition -eq "Office") { "0.0.0.0" } else { "127.0.0.1" }
 sc.exe create "FleetSafetyManager" `
-    binPath= "`"$exe`" --urls http://0.0.0.0:8080" `
+    binPath= "`"$exe`" --urls http://${listenHost}:8080" `
     start= auto DisplayName= "Fleet Safety Manager" | Out-Null
 
-netsh advfirewall firewall delete rule name="Fleet Safety Manager" | Out-Null
-netsh advfirewall firewall add rule name="Fleet Safety Manager" `
-    dir=in action=allow protocol=TCP localport=8080 | Out-Null
+netsh advfirewall firewall delete rule name="Fleet Safety Manager Office Synchronization" | Out-Null
+if ($Edition -eq "Office") {
+    netsh advfirewall firewall add rule `
+        name="Fleet Safety Manager Office Synchronization" `
+        dir=in action=allow protocol=TCP localport=8080 profile=private | Out-Null
+}
 
 Start-Service "FleetSafetyManager"
 Write-Host "Installed. Open http://localhost:8080"

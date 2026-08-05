@@ -68,10 +68,7 @@ public sealed class SynchronizationTokenService
 
         if (!string.IsNullOrWhiteSpace(storedHash))
             hashes.Add(storedHash);
-        if (!string.IsNullOrWhiteSpace(options.VesselToken))
-            hashes.Add(HashToken(options.VesselToken));
-
-        var candidateBytes = Convert.FromHexString(HashToken(candidate));
+        var candidateBytes = Convert.FromHexString(HashToken(candidate.Trim()));
 
         return hashes.Any(hash =>
         {
@@ -99,6 +96,17 @@ public sealed class SynchronizationTokenService
             "A synchronization token has not been configured.");
     }
 
+    public void SetOutboundToken(
+        SynchronizationSetting setting,
+        string token)
+    {
+        var normalized = token.Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+            throw new InvalidDataException("The synchronization token is required.");
+        setting.ProtectedToken = protector.Protect(normalized);
+        setting.LastModifiedUtc = DateTime.UtcNow;
+    }
+
     public string GetRemoteBaseUrl(
         SynchronizationSetting setting,
         string edition)
@@ -111,10 +119,12 @@ public sealed class SynchronizationTokenService
         }
 
         if (!Uri.TryCreate(configured, UriKind.Absolute, out var uri) ||
-            !uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase))
+            (!uri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
+             !(setting.AllowInsecureHttp &&
+               uri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase))))
         {
             throw new InvalidOperationException(
-                "The synchronization endpoint must be an absolute HTTPS URL.");
+                "The synchronization endpoint must use HTTPS unless local HTTP test mode is explicitly enabled.");
         }
 
         return uri.ToString().TrimEnd('/');
@@ -153,5 +163,5 @@ public sealed class SynchronizationTokenService
 
     public static string HashToken(string token) =>
         Convert.ToHexString(
-            SHA256.HashData(Encoding.UTF8.GetBytes(token)));
+            SHA256.HashData(Encoding.UTF8.GetBytes(token.Trim())));
 }

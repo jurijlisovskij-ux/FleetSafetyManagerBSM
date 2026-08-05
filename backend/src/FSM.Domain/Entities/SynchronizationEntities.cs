@@ -7,6 +7,8 @@ public sealed class SynchronizationSetting
     public string? RemoteBaseUrl { get; set; }
     public string? TokenHash { get; set; }
     public string? ProtectedToken { get; set; }
+    public bool Enabled { get; set; }
+    public bool AllowInsecureHttp { get; set; }
     public int AutomaticIntervalHours { get; set; } = 24;
     public DateTime LastUploadedUtc { get; set; } = DateTime.UnixEpoch;
     public DateTime RemoteCursorUtc { get; set; } = DateTime.UnixEpoch;
@@ -30,6 +32,10 @@ public sealed class SynchronizationLog
     public int DownloadedItems { get; set; }
     public string Result { get; set; } = "Success";
     public string? ErrorMessage { get; set; }
+    public string? EndpointHost { get; set; }
+    public int? HttpStatus { get; set; }
+    public string? Phase { get; set; }
+    public int RejectedItems { get; set; }
 }
 
 public sealed class SynchronizationTransfer

@@ -34,14 +34,23 @@ public sealed class SynchronizationStatusService(
             pending += files.CountChangedFiles(
                 vessel,
                 setting.LastUploadedUtc);
-            var configured = edition.Equals(
+            var configured = setting.Enabled && edition.Equals(
                 "Ship",
                 StringComparison.OrdinalIgnoreCase)
                 ? (!string.IsNullOrWhiteSpace(setting.RemoteBaseUrl) ||
                    !string.IsNullOrWhiteSpace(options.OfficeBaseUrl)) &&
                   (!string.IsNullOrWhiteSpace(setting.ProtectedToken) ||
                    !string.IsNullOrWhiteSpace(options.VesselToken))
-                : !string.IsNullOrWhiteSpace(setting.TokenHash);
+                : setting.Enabled &&
+                  !string.IsNullOrWhiteSpace(setting.TokenHash) &&
+                  !string.IsNullOrWhiteSpace(setting.RemoteBaseUrl);
+            DateTime? nextAttempt = null;
+            if (edition.Equals("Ship", StringComparison.OrdinalIgnoreCase) &&
+                setting.Enabled && setting.AutomaticIntervalHours > 0)
+            {
+                nextAttempt = (setting.LastAttemptUtc ?? DateTime.UtcNow)
+                    .AddHours(setting.AutomaticIntervalHours);
+            }
 
             result.Add(new SynchronizationStatusItem(
                 vessel.Id,
@@ -54,7 +63,10 @@ public sealed class SynchronizationStatusService(
                 setting.CurrentStage,
                 configured,
                 setting.RemoteBaseUrl,
-                setting.LastError));
+                setting.LastError,
+                setting.Enabled,
+                setting.AllowInsecureHttp,
+                nextAttempt));
         }
 
         return result;

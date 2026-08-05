@@ -8,8 +8,6 @@ namespace FSM.Api.Synchronization;
 
 public sealed class SynchronizationFileService
 {
-    private const long MaximumSynchronizedFileSize =
-        100L * 1024L * 1024L;
     private static readonly HashSet<string> AllowedFolders =
         new(StringComparer.OrdinalIgnoreCase)
         {
@@ -405,10 +403,11 @@ public sealed class SynchronizationFileService
     private static string Normalize(string path) =>
         path.Replace('\\', '/').TrimStart('/');
 
-    private static void ValidateMetadata(SynchronizationFileItem file)
+    private void ValidateMetadata(SynchronizationFileItem file)
     {
-        if (file.Size < 0 || file.Size > MaximumSynchronizedFileSize)
-            throw new InvalidDataException("Invalid synchronization file size.");
+        if (file.Size < 0 || file.Size > options.MaximumFileSizeBytes)
+            throw new InvalidDataException(
+                $"The synchronization file exceeds the maximum allowed size of {options.MaximumFileSizeBytes} bytes.");
         if (file.Checksum.Length != 64 ||
             !file.Checksum.All(Uri.IsHexDigit))
         {

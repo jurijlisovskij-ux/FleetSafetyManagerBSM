@@ -1,11 +1,13 @@
 using FSM.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 
 namespace FSM.Api.Synchronization;
 
 public sealed class SynchronizationWorker(
     IServiceScopeFactory scopeFactory,
     IConfiguration configuration,
+    IOptions<SynchronizationOptions> options,
     ILogger<SynchronizationWorker> logger) : BackgroundService
 {
     protected override async Task ExecuteAsync(
@@ -33,7 +35,9 @@ public sealed class SynchronizationWorker(
                     "The automatic synchronization scheduler failed.");
             }
 
-            await Task.Delay(TimeSpan.FromMinutes(1), stoppingToken);
+            await Task.Delay(
+                TimeSpan.FromSeconds(Math.Max(1, options.Value.SchedulerPollSeconds)),
+                stoppingToken);
         }
     }
 
@@ -61,6 +65,8 @@ public sealed class SynchronizationWorker(
             var setting = await tokens.GetOrCreateSettingAsync(
                 vesselId,
                 cancellationToken);
+            if (!setting.Enabled)
+                continue;
             var interval = SynchronizationTokenService.NormalizeInterval(
                 setting.AutomaticIntervalHours);
             if (interval == 0)

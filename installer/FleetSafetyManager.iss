@@ -41,6 +41,9 @@ UninstallDisplayName={#AppName} {#MyEdition}
 UninstallDisplayIcon={app}\FleetSafetyManager.ico
 SetupIconFile=FleetSafetyManager.ico
 
+[Tasks]
+Name: "officesyncfirewall"; Description: "Enable Office synchronization from other computers on the private network (TCP 8080)"; Flags: checkedonce; Check: IsOfficeEdition
+
 [Files]
 Source: "..\publish\*"; DestDir: "{app}\Releases\{#ReleaseName}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\publish\FleetSafetyManagerLauncher.exe"; DestDir: "{app}"; Flags: ignoreversion
@@ -75,6 +78,7 @@ Filename: "{app}\FleetSafetyManagerLauncher.exe"; WorkingDir: "{app}"; Descripti
 [UninstallRun]
 Filename: "{cmd}"; Parameters: "/C sc stop {#ServiceName}"; Flags: runhidden waituntilterminated; RunOnceId: "StopService"
 Filename: "{cmd}"; Parameters: "/C sc delete {#ServiceName}"; Flags: runhidden waituntilterminated; RunOnceId: "DeleteService"
+Filename: "{cmd}"; Parameters: "/C netsh advfirewall firewall delete rule name=""Fleet Safety Manager Office Synchronization"""; Flags: runhidden waituntilterminated; RunOnceId: "DeleteSyncFirewallRule"
 
 [Code]
 function ServiceExists(const ServiceName: string): Boolean;
@@ -123,6 +127,11 @@ begin
   end
   else
     RaiseException('The RC20 release is missing appsettings.json.');
+end;
+
+function IsOfficeEdition: Boolean;
+begin
+  Result := CompareText('{#MyEdition}', 'Office') = 0;
 end;
 
 function CurrentReleasePath: string;
@@ -240,7 +249,11 @@ var
   BinPath: string;
   CommandLine: string;
 begin
-  BinPath := '"' + ReleasePath + '\FSM.Api.exe" --urls http://127.0.0.1:8080';
+  if (CompareText('{#MyEdition}', 'Office') = 0) and
+     WizardIsTaskSelected('officesyncfirewall') then
+    BinPath := '"' + ReleasePath + '\FSM.Api.exe" --urls http://0.0.0.0:8080'
+  else
+    BinPath := '"' + ReleasePath + '\FSM.Api.exe" --urls http://127.0.0.1:8080';
 
   if ServiceExists('{#ServiceName}') then
   begin
@@ -266,6 +279,16 @@ begin
   if not Exec(ExpandConstant('{cmd}'), '/C sc start {#ServiceName}', '', SW_HIDE,
     ewWaitUntilTerminated, ResultCode) or ((ResultCode <> 0) and (ResultCode <> 1056)) then
     RaiseException('The Fleet Safety Manager RC20 service could not start.');
+
+  Exec(ExpandConstant('{cmd}'),
+    '/C netsh advfirewall firewall delete rule name="Fleet Safety Manager Office Synchronization"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  if (CompareText('{#MyEdition}', 'Office') = 0) and
+     WizardIsTaskSelected('officesyncfirewall') then
+    if not Exec(ExpandConstant('{cmd}'),
+      '/C netsh advfirewall firewall add rule name="Fleet Safety Manager Office Synchronization" dir=in action=allow protocol=TCP localport=8080 profile=private',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
+      RaiseException('Could not configure the Office synchronization firewall rule.');
 end;
 
 procedure RemoveReleasePattern(const Pattern, ActiveReleasePath: string);

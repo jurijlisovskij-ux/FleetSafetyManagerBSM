@@ -36,6 +36,12 @@ public static class SchemaUpgrade
             await AddColumnIfMissingAsync(db, "users", "FailedLoginAttempts", "INTEGER NOT NULL DEFAULT 0");
             await UpgradeUserIdentityAsync(db);
             await CreateSynchronizationTablesAsync(db);
+            await AddColumnIfMissingAsync(db, "synchronization_settings", "Enabled", "INTEGER NOT NULL DEFAULT 0");
+            await AddColumnIfMissingAsync(db, "synchronization_settings", "AllowInsecureHttp", "INTEGER NOT NULL DEFAULT 0");
+            await AddColumnIfMissingAsync(db, "synchronization_logs", "EndpointHost", "TEXT NULL");
+            await AddColumnIfMissingAsync(db, "synchronization_logs", "HttpStatus", "INTEGER NULL");
+            await AddColumnIfMissingAsync(db, "synchronization_logs", "Phase", "TEXT NULL");
+            await AddColumnIfMissingAsync(db, "synchronization_logs", "RejectedItems", "INTEGER NOT NULL DEFAULT 0");
             await CreateSecurityTablesAsync(db);
             await CreateMedicineTablesAsync(db);
             await CreateInspectionTablesAsync(db);
@@ -147,6 +153,8 @@ public static class SchemaUpgrade
                 RemoteBaseUrl TEXT NULL,
                 TokenHash TEXT NULL,
                 ProtectedToken TEXT NULL,
+                Enabled INTEGER NOT NULL DEFAULT 0,
+                AllowInsecureHttp INTEGER NOT NULL DEFAULT 0,
                 AutomaticIntervalHours INTEGER NOT NULL DEFAULT 24,
                 LastUploadedUtc TEXT NOT NULL DEFAULT '1970-01-01 00:00:00',
                 RemoteCursorUtc TEXT NOT NULL DEFAULT '1970-01-01 00:00:00',
@@ -169,6 +177,10 @@ public static class SchemaUpgrade
                 DownloadedItems INTEGER NOT NULL,
                 Result TEXT NOT NULL,
                 ErrorMessage TEXT NULL,
+                EndpointHost TEXT NULL,
+                HttpStatus INTEGER NULL,
+                Phase TEXT NULL,
+                RejectedItems INTEGER NOT NULL DEFAULT 0,
                 FOREIGN KEY (VesselId) REFERENCES vessels (Id) ON DELETE CASCADE
             );
 

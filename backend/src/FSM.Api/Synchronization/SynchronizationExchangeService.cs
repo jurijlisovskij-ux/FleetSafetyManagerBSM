@@ -412,8 +412,9 @@ public sealed class SynchronizationExchangeService(
         {
             var existing = await db.InspectionReports.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.Id == incoming.Id, cancellationToken)
                 ?? await db.InspectionReports.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.PdfSha256 == incoming.PdfSha256, cancellationToken);
+            if (!ShouldApply(existing is not null, sourceEdition, "Ship", "inspection report", incoming.Id, warnings, ref conflicts))
+                continue;
             if (existing is null) { existing = new InspectionReport { Id = incoming.Id, VesselId = vesselId, ReportNumber = incoming.ReportNumber, Inspector = incoming.Inspector, PdfPath = incoming.PdfPath, PdfSha256 = incoming.PdfSha256 }; db.Add(existing); }
-            else if (existing.LastModifiedUtc > EnsureUtc(incoming.LastModifiedUtc)) continue;
             existing.ReportNumber = incoming.ReportNumber; existing.InspectionDate = incoming.InspectionDate;
             existing.Inspector = incoming.Inspector; existing.PdfPath = incoming.PdfPath; existing.PdfSha256 = incoming.PdfSha256;
             existing.LastModifiedUtc = EnsureUtc(incoming.LastModifiedUtc); existing.IsDeleted = incoming.IsDeleted; accepted++;
@@ -422,8 +423,9 @@ public sealed class SynchronizationExchangeService(
         {
             if (!await db.InspectionReports.IgnoreQueryFilters().AnyAsync(x => x.Id == incoming.InspectionReportId && x.VesselId == vesselId, cancellationToken)) continue;
             var existing = await db.InspectionReportItems.IgnoreQueryFilters().SingleOrDefaultAsync(x => x.Id == incoming.Id, cancellationToken);
+            if (!ShouldApply(existing is not null, sourceEdition, "Ship", "inspection result", incoming.Id, warnings, ref conflicts))
+                continue;
             if (existing is null) { existing = new InspectionReportItem { Id = incoming.Id, InspectionReportId = incoming.InspectionReportId, EquipmentId = incoming.EquipmentId, Result = incoming.Result }; db.Add(existing); }
-            else if (existing.LastModifiedUtc > EnsureUtc(incoming.LastModifiedUtc)) continue;
             existing.Result = incoming.Result; existing.Remarks = incoming.Remarks; existing.CorrectiveAction = incoming.CorrectiveAction; existing.AttachmentPath = incoming.AttachmentPath;
             existing.ClosureDate = incoming.ClosureDate; existing.ClosedBy = incoming.ClosedBy; existing.ClosureRemarks = incoming.ClosureRemarks; existing.ClosureAttachmentPath = incoming.ClosureAttachmentPath;
             existing.LastModifiedUtc = EnsureUtc(incoming.LastModifiedUtc); existing.IsDeleted = incoming.IsDeleted; accepted++;

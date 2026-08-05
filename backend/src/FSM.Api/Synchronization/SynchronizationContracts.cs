@@ -125,6 +125,7 @@ public sealed record SynchronizationHandshakeResponse(
     string ApplicationVersion,
     string Edition,
     Guid VesselId,
+    string VesselImo,
     DateTime ServerTimeUtc);
 
 public sealed record PrepareSynchronizationFileRequest(
@@ -152,7 +153,32 @@ public sealed record SynchronizationRunResult(
 
 public sealed record UpdateSynchronizationSettingsRequest(
     int AutomaticIntervalHours,
-    string? RemoteBaseUrl);
+    string? RemoteBaseUrl,
+    bool Enabled,
+    bool AllowInsecureHttp);
+
+public sealed record ShipSynchronizationConfiguration(
+    string OfficeEndpointUrl,
+    Guid VesselId,
+    string VesselImo,
+    string SynchronizationToken,
+    string RequiredApplicationVersion,
+    int AutomaticIntervalHours,
+    bool AllowInsecureHttp);
+
+public sealed record ExportShipConfigurationRequest(string Passphrase);
+
+public sealed record ImportShipConfigurationRequest(
+    string ProtectedConfiguration,
+    string Passphrase);
+
+public sealed record ManualShipConfigurationRequest(
+    Guid VesselId,
+    string VesselImo,
+    string OfficeEndpointUrl,
+    string SynchronizationToken,
+    int AutomaticIntervalHours,
+    bool AllowInsecureHttp);
 
 public sealed record SynchronizationStatusItem(
     Guid VesselId,
@@ -165,4 +191,7 @@ public sealed record SynchronizationStatusItem(
     string CurrentStage,
     bool Configured,
     string? RemoteBaseUrl,
-    string? LastError);
+    string? LastError,
+    bool Enabled,
+    bool AllowInsecureHttp,
+    DateTime? NextAutomaticAttemptUtc);

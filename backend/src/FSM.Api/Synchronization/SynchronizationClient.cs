@@ -49,6 +49,9 @@ public sealed class SynchronizationClient(
             var vessel = await db.Vessels.SingleAsync(
                 x => x.Id == vesselId,
                 cancellationToken);
+            if (!setting.Enabled)
+                throw new InvalidOperationException(
+                    "Synchronization is disabled for this vessel.");
             var remoteBaseUrl = tokens.GetRemoteBaseUrl(setting, edition);
             var token = tokens.GetOutboundToken(setting);
             var client = httpClientFactory.CreateClient("Synchronization");
@@ -62,8 +65,13 @@ public sealed class SynchronizationClient(
                 remoteBaseUrl,
                 token,
                 vesselId,
+                vessel.ImoNumber,
                 cancellationToken);
             ValidateVersion(handshake.ApplicationVersion);
+            if (!string.Equals(handshake.VesselImo, vessel.ImoNumber,
+                StringComparison.OrdinalIgnoreCase))
+                throw new InvalidDataException(
+                    "The remote vessel IMO does not match the configured local vessel.");
 
             var localSnapshotUtc = DateTime.UtcNow;
             var outgoing = await exchange.BuildPayloadAsync(
@@ -165,6 +173,10 @@ public sealed class SynchronizationClient(
                 downloaded,
                 status,
                 message,
+                remoteBaseUrl,
+                null,
+                setting.CurrentStage,
+                conflicts,
                 cancellationToken);
 
             return new SynchronizationRunResult(
@@ -193,6 +205,10 @@ public sealed class SynchronizationClient(
                     downloaded,
                     "Failed",
                     exception.Message,
+                    setting.RemoteBaseUrl,
+                    (exception as HttpRequestException)?.StatusCode,
+                    setting.CurrentStage,
+                    0,
                     CancellationToken.None);
             }
             throw;
@@ -208,11 +224,13 @@ public sealed class SynchronizationClient(
         string remoteBaseUrl,
         string token,
         Guid vesselId,
+        string vesselImo,
         CancellationToken cancellationToken)
     {
         var url =
             $"{remoteBaseUrl}/api/synchronization/handshake" +
             $"?vesselId={vesselId:D}" +
+            $"&vesselImo={Uri.EscapeDataString(vesselImo)}" +
             $"&version={Uri.EscapeDataString(options.ApplicationVersion)}";
         using var request = CreateRequest(HttpMethod.Get, url, token);
         using var response = await client.SendAsync(request, cancellationToken);
@@ -222,6 +240,30 @@ public sealed class SynchronizationClient(
                 cancellationToken: cancellationToken)
             ?? throw new InvalidDataException(
                 "The synchronization handshake was empty.");
+    }
+
+    public async Task<SynchronizationHandshakeResponse> TestConnectionAsync(
+        Guid vesselId,
+        CancellationToken cancellationToken)
+    {
+        var setting = await tokens.GetOrCreateSettingAsync(vesselId, cancellationToken);
+        var vessel = await db.Vessels.AsNoTracking().SingleAsync(
+            x => x.Id == vesselId, cancellationToken);
+        var remoteBaseUrl = tokens.GetRemoteBaseUrl(setting, edition);
+        var token = tokens.GetOutboundToken(setting);
+        var response = await GetHandshakeAsync(
+            httpClientFactory.CreateClient("Synchronization"),
+            remoteBaseUrl,
+            token,
+            vesselId,
+            vessel.ImoNumber,
+            cancellationToken);
+        ValidateVersion(response.ApplicationVersion);
+        if (!string.Equals(response.VesselImo, vessel.ImoNumber,
+            StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException(
+                "The remote vessel IMO does not match the configured local vessel.");
+        return response;
     }
 
     private async Task UploadFileAsync(
@@ -369,6 +411,10 @@ public sealed class SynchronizationClient(
         int downloaded,
         string result,
         string? error,
+        string? endpoint,
+        System.Net.HttpStatusCode? httpStatus,
+        string? phase,
+        int rejected,
         CancellationToken cancellationToken)
     {
         db.SynchronizationLogs.Add(new SynchronizationLog
@@ -381,7 +427,13 @@ public sealed class SynchronizationClient(
             UploadedItems = uploaded,
             DownloadedItems = downloaded,
             Result = result,
-            ErrorMessage = error
+            ErrorMessage = error,
+            EndpointHost = Uri.TryCreate(endpoint, UriKind.Absolute, out var uri)
+                ? uri.Host
+                : null,
+            HttpStatus = httpStatus.HasValue ? (int)httpStatus.Value : null,
+            Phase = phase,
+            RejectedItems = rejected
         });
         await db.SaveChangesAsync(cancellationToken);
     }

@@ -40,6 +40,10 @@ jobs:
         shell: pwsh
         run: ./scripts/test-role-visibility.ps1
 
+      - name: Test installed-path Office and Ship synchronization
+        shell: pwsh
+        run: ./scripts/test-synchronization-e2e.ps1
+
       - name: Build frontend
         shell: pwsh
         run: |

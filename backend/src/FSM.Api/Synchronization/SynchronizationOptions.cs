@@ -12,4 +12,7 @@ public sealed class SynchronizationOptions
     public int AutomaticIntervalHours { get; set; } = 24;
     public int ChunkSizeBytes { get; set; } = 1024 * 1024;
     public int RequestTimeoutMinutes { get; set; } = 10;
+    public bool AllowInsecureHttp { get; set; }
+    public long MaximumFileSizeBytes { get; set; } = 100L * 1024L * 1024L;
+    public int SchedulerPollSeconds { get; set; } = 60;
 }

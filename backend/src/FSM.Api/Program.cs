@@ -51,7 +51,11 @@ builder.Services.Configure<SynchronizationOptions>(
 builder.Services.AddSingleton<EmailSender>();
 builder.Services.AddHostedService<DailyNotificationWorker>();
 builder.Services.AddDataProtection()
-    .PersistKeysToFileSystem(new DirectoryInfo(Path.Combine("Data", "Keys")));
+    .PersistKeysToFileSystem(new DirectoryInfo(
+        Path.GetFullPath(
+            builder.Configuration["DataProtection:KeyPath"] ??
+            Path.Combine("Data", "Keys"),
+            AppContext.BaseDirectory)));
 builder.Services.AddHttpClient("Synchronization", client =>
 {
     var timeoutMinutes = builder.Configuration.GetValue<int?>(
@@ -63,6 +67,7 @@ builder.Services.AddScoped<SynchronizationFileService>();
 builder.Services.AddScoped<SynchronizationExchangeService>();
 builder.Services.AddScoped<SynchronizationStatusService>();
 builder.Services.AddScoped<SynchronizationClient>();
+builder.Services.AddSingleton<ShipConfigurationProtectionService>();
 builder.Services.AddScoped<VesselAccessService>();
 builder.Services.AddScoped<AuditService>();
 builder.Services.AddSingleton<RecoveryKeyService>();

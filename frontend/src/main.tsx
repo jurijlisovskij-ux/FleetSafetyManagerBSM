@@ -139,6 +139,9 @@ type SynchronizationStatus = {
   configured: boolean;
   remoteBaseUrl?: string;
   lastError?: string;
+  enabled: boolean;
+  allowInsecureHttp: boolean;
+  nextAutomaticAttemptUtc?: string;
 };
 
 type SynchronizationStatusResponse = {
@@ -640,7 +643,7 @@ function App() {
               <div className="dashboard-section-heading">
                 <h2>Synchronization Status</h2>
                 <button onClick={() => setShowSynchronization(true)}>
-                  Synchronize
+                  Open Log
                 </button>
               </div>
               <div className="dashboard-table-wrap">
@@ -1085,6 +1088,10 @@ function SynchronizationDialog({
   const [intervalHours, setIntervalHours] =
     useState<0 | 6 | 12 | 24>(24);
   const [remoteBaseUrl, setRemoteBaseUrl] = useState("");
+  const [enabled, setEnabled] = useState(false);
+  const [allowInsecureHttp, setAllowInsecureHttp] = useState(false);
+  const [configurationPassphrase, setConfigurationPassphrase] = useState("");
+  const [manualToken, setManualToken] = useState("");
   const [phase, setPhase] = useState("");
   const [generatedToken, setGeneratedToken] = useState("");
   const [busy, setBusy] = useState(false);
@@ -1112,6 +1119,8 @@ function SynchronizationDialog({
     if (!selected) return;
     setIntervalHours(selected.automaticIntervalHours);
     setRemoteBaseUrl(selected.remoteBaseUrl ?? "");
+    setEnabled(selected.enabled);
+    setAllowInsecureHttp(selected.allowInsecureHttp);
   }, [selected?.vesselId]);
 
   async function loadStatus(notify = true) {
@@ -1204,6 +1213,8 @@ function SynchronizationDialog({
           body: JSON.stringify({
             automaticIntervalHours: intervalHours,
             remoteBaseUrl: remoteBaseUrl.trim() || null,
+            enabled,
+            allowInsecureHttp,
           }),
         },
       );
@@ -1217,6 +1228,109 @@ function SynchronizationDialog({
     } finally {
       setBusy(false);
     }
+  }
+
+  async function testConnection() {
+    if (!selectedVesselId) return;
+    setBusy(true); setError(""); setPhase("Checking connection...");
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/synchronization/test/${selectedVesselId}`,
+        token,
+        { method: "POST" },
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.message ?? "Connection test failed.");
+      setPhase("Connection successful.");
+      await refresh();
+    } catch (exception) {
+      setPhase("Failed"); setError((exception as Error).message);
+    } finally { setBusy(false); }
+  }
+
+  async function exportConfiguration() {
+    if (!selectedVesselId) return;
+    setBusy(true); setError("");
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/synchronization/configuration/export/${selectedVesselId}`,
+        token,
+        { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ passphrase: configurationPassphrase }) },
+      );
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.message ?? "Unable to export Ship configuration.");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `FSM-Ship-Sync-${selected?.imoNumber ?? "vessel"}.json`;
+      link.click(); URL.revokeObjectURL(url);
+    } catch (exception) { setError((exception as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function exportDiagnostics() {
+    setBusy(true); setError("");
+    try {
+      const response = await authFetch(`${apiBaseUrl}/synchronization/diagnostics`, token);
+      if (!response.ok) throw new Error("Unable to export synchronization diagnostics.");
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url; link.download = `FSM-Sync-Diagnostics-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}.zip`;
+      link.click(); URL.revokeObjectURL(url);
+    } catch (exception) { setError((exception as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function copyConfigurationSummary() {
+    if (!selected) return;
+    const lines = [
+      `Office endpoint: ${remoteBaseUrl.trim()}`,
+      `Vessel ID: ${selected.vesselId}`,
+      `Vessel IMO: ${selected.imoNumber}`,
+      `Application version: ${statusResponse?.applicationVersion ?? "0.20.0-RC20"}`,
+      `Automatic interval: ${intervalHours === 0 ? "Manual only" : `${intervalHours} hours`}`,
+      generatedToken ? `One-time synchronization token: ${generatedToken}` : "Token: generate or rotate before provisioning",
+    ];
+    await navigator.clipboard.writeText(lines.join("\n"));
+  }
+
+  async function importConfiguration(file: File) {
+    setBusy(true); setError("");
+    try {
+      const protectedConfiguration = await file.text();
+      const response = await authFetch(
+        `${apiBaseUrl}/synchronization/configuration/import`, token,
+        { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ protectedConfiguration, passphrase: configurationPassphrase }) },
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.message ?? "Unable to import Ship configuration.");
+      await refresh();
+    } catch (exception) { setError((exception as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function saveManualShipConfiguration() {
+    if (!selected) return;
+    setBusy(true); setError("");
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/synchronization/configuration/manual`, token,
+        { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+          vesselId: selected.vesselId, vesselImo: selected.imoNumber,
+          officeEndpointUrl: remoteBaseUrl.trim(), synchronizationToken: manualToken.trim(),
+          automaticIntervalHours: intervalHours, allowInsecureHttp,
+        }) },
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.message ?? "Unable to save Ship configuration.");
+      setManualToken(""); await refresh();
+    } catch (exception) { setError((exception as Error).message); }
+    finally { setBusy(false); }
   }
 
   async function rotateToken() {
@@ -1330,11 +1444,20 @@ function SynchronizationDialog({
               {busy ? "Synchronizing..." : "Synchronize"}
             </button>
             <button disabled={busy} onClick={refresh}>Refresh</button>
+            {statusResponse?.edition === "Ship" &&
+              <button disabled={busy || !selected.configured} onClick={testConnection}>
+                Test Connection
+              </button>}
           </div>
 
-          {userRole === "OfficeAdmin" &&
+          {userRole === "OfficeAdmin" && statusResponse?.edition === "Office" &&
             <section className="synchronization-settings">
-              <h3>System Administrator Settings</h3>
+              <h3>Office Synchronization Provisioning</h3>
+              <label className="checkbox-label">
+                <input type="checkbox" checked={enabled}
+                  onChange={event => setEnabled(event.target.checked)} />
+                Enable synchronization for {selected.vesselName}
+              </label>
               <label>
                 Automatic synchronization
                 <select
@@ -1350,17 +1473,23 @@ function SynchronizationDialog({
                 </select>
               </label>
               <label>
-                Remote Ship HTTPS URL (optional for Ship-initiated sync)
+                Effective Office synchronization URL
                 <input
                   type="url"
-                  placeholder="https://vessel.example.com"
+                  placeholder="https://office.example.com:8443"
                   value={remoteBaseUrl}
                   onChange={event => setRemoteBaseUrl(event.target.value)}
                 />
               </label>
+              <label className="checkbox-label">
+                <input type="checkbox" checked={allowInsecureHttp}
+                  onChange={event => setAllowInsecureHttp(event.target.checked)} />
+                Allow HTTP for explicitly approved local-network testing
+              </label>
               <div className="synchronization-actions">
                 <button disabled={busy} onClick={saveSettings}>Save Settings</button>
                 <button disabled={busy} onClick={rotateToken}>Generate Vessel Token</button>
+                <button disabled={busy || !remoteBaseUrl.trim()} onClick={copyConfigurationSummary}>Copy Configuration</button>
               </div>
               {generatedToken &&
                 <div className="generated-token">
@@ -1370,6 +1499,60 @@ function SynchronizationDialog({
                     Copy
                   </button>
                 </div>}
+              <label>
+                Configuration file passphrase (minimum 12 characters)
+                <input type="password" value={configurationPassphrase}
+                  onChange={event => setConfigurationPassphrase(event.target.value)} />
+              </label>
+              <button disabled={busy || configurationPassphrase.length < 12}
+                onClick={exportConfiguration}>Export Protected Ship Configuration</button>
+              <button disabled={busy} onClick={exportDiagnostics}>Export Support Diagnostics</button>
+            </section>}
+
+          {statusResponse?.edition === "Ship" &&
+            <section className="synchronization-settings">
+              <h3>Ship Synchronization Setup</h3>
+              <p>Configured vessel: <strong>{selected.vesselName}</strong> · IMO {selected.imoNumber}</p>
+              <label>
+                Configuration file passphrase
+                <input type="password" value={configurationPassphrase}
+                  onChange={event => setConfigurationPassphrase(event.target.value)} />
+              </label>
+              <label>
+                Import Office-generated configuration
+                <input type="file" accept="application/json,.json" disabled={busy}
+                  onChange={event => {
+                    const file = event.target.files?.[0];
+                    if (file) void importConfiguration(file);
+                  }} />
+              </label>
+              <label>
+                Office synchronization URL
+                <input type="url" value={remoteBaseUrl}
+                  onChange={event => setRemoteBaseUrl(event.target.value)} />
+              </label>
+              <label>
+                Vessel synchronization token
+                <input type="password" value={manualToken}
+                  onChange={event => setManualToken(event.target.value)} />
+              </label>
+              <label className="checkbox-label">
+                <input type="checkbox" checked={allowInsecureHttp}
+                  onChange={event => setAllowInsecureHttp(event.target.checked)} />
+                Allow HTTP for explicitly approved local-network testing
+              </label>
+              <label>
+                Automatic synchronization
+                <select value={intervalHours}
+                  onChange={event => setIntervalHours(Number(event.target.value) as 0 | 6 | 12 | 24)}>
+                  <option value={6}>Every 6 hours</option><option value={12}>Every 12 hours</option>
+                  <option value={24}>Every 24 hours</option><option value={0}>Manual only</option>
+                </select>
+              </label>
+              <button disabled={busy || !manualToken.trim() || !remoteBaseUrl.trim()}
+                onClick={saveManualShipConfiguration}>Save Manual Configuration</button>
+              {selected.nextAutomaticAttemptUtc &&
+                <p>Next automatic attempt: {new Date(selected.nextAutomaticAttemptUtc).toLocaleString("en-GB")}</p>}
             </section>}
         </>}
 
