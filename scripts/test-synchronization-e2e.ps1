@@ -249,13 +249,13 @@ try {
         "Token rotation must invalidate the previous Ship configuration."
     Invoke-Json Put "$shipUrl/api/synchronization/configuration/manual" $crew @{
         vesselId = $vessel.id; vesselImo = $vessel.imoNumber; officeEndpointUrl = $officeUrl
-        synchronizationToken = "  $rotated  "; automaticIntervalHours = 6; allowInsecureHttp = $true
+        synchronizationToken = "  $rotated  "; automaticIntervalHours = 0; allowInsecureHttp = $true
     } | Out-Null
     Invoke-Json Post "$shipUrl/api/synchronization/test/$($vessel.id)" $crew | Out-Null
     Write-Host "PASS: token rotation"
 
     Stop-Instance $officeProcess; $officeProcess = $null
-    Assert-True ((Get-StatusCode Post "$shipUrl/api/synchronization/run/$($vessel.id)" $crew) -eq 502) `
+    Assert-True ((Get-StatusCode Post "$shipUrl/api/synchronization/run/$($vessel.id)" $crew) -eq 503) `
         "Ship must remain operational and report a safe failure while Office is offline."
     $office = Start-Instance "Office" $officeRoot $officePort
     $officeProcess = $office[0]; $officeUrl = $office[1]

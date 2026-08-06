@@ -10,6 +10,8 @@ public sealed class SynchronizationWorker(
     IOptions<SynchronizationOptions> options,
     ILogger<SynchronizationWorker> logger) : BackgroundService
 {
+    private readonly HashSet<Guid> startupAttempts = [];
+
     protected override async Task ExecuteAsync(
         CancellationToken stoppingToken)
     {
@@ -52,6 +54,12 @@ public sealed class SynchronizationWorker(
             var query = db.Vessels.AsNoTracking();
             if (Guid.TryParse(configuredId, out var shipVesselId))
                 query = query.Where(x => x.Id == shipVesselId);
+            else
+                query = query.Where(x => db.SynchronizationSettings.Any(
+                    setting => setting.VesselId == x.Id &&
+                        setting.Enabled &&
+                        setting.RemoteBaseUrl != null &&
+                        setting.ProtectedToken != null));
             vesselIds = await query
                 .Select(x => x.Id)
                 .ToListAsync(cancellationToken);
@@ -72,9 +80,32 @@ public sealed class SynchronizationWorker(
             if (interval == 0)
                 continue;
 
-            var lastAttempt = setting.LastAttemptUtc ?? DateTime.MinValue;
-            if (lastAttempt.AddHours(interval) > DateTime.UtcNow)
+            var now = DateTime.UtcNow;
+            if (setting.NextRetryUtc.HasValue && setting.NextRetryUtc > now)
                 continue;
+
+            var status = scope.ServiceProvider
+                .GetRequiredService<SynchronizationStatusService>();
+            var files = scope.ServiceProvider
+                .GetRequiredService<SynchronizationFileService>();
+            var db = scope.ServiceProvider.GetRequiredService<FsmDbContext>();
+            var vessel = await db.Vessels.AsNoTracking().SingleAsync(
+                x => x.Id == vesselId,
+                cancellationToken);
+            var pending = await status.CountPendingAsync(
+                vesselId,
+                setting.LastUploadedUtc,
+                cancellationToken) + files.CountChangedFiles(
+                    vessel,
+                    setting.LastUploadedUtc);
+            var scheduledAt = (setting.LastSynchronizationUtc ?? DateTime.MinValue)
+                .AddHours(interval);
+            var startupDue = startupAttempts.Add(vesselId);
+            if (!startupDue && setting.LastSynchronizationUtc.HasValue &&
+                pending == 0 && scheduledAt > now)
+            {
+                continue;
+            }
 
             try
             {
@@ -87,7 +118,7 @@ public sealed class SynchronizationWorker(
                 logger.LogWarning(
                     exception,
                     "Automatic synchronization failed for vessel {VesselId}. " +
-                    "The next attempt will use the configured interval.",
+                    "Exponential retry is scheduled automatically.",
                     vesselId);
             }
         }

@@ -4,9 +4,13 @@ public sealed class SynchronizationSetting
 {
     public Guid VesselId { get; set; }
     public Vessel? Vessel { get; set; }
+    public Guid SynchronizationIdentity { get; set; }
     public string? RemoteBaseUrl { get; set; }
     public string? TokenHash { get; set; }
     public string? ProtectedToken { get; set; }
+    public string? ActivationCodeHash { get; set; }
+    public DateTime? ActivationCodeExpiresUtc { get; set; }
+    public DateTime? ActivationCodeUsedUtc { get; set; }
     public bool Enabled { get; set; }
     public bool AllowInsecureHttp { get; set; }
     public int AutomaticIntervalHours { get; set; } = 24;
@@ -18,6 +22,8 @@ public sealed class SynchronizationSetting
     public string LastStatus { get; set; } = "Warning";
     public string CurrentStage { get; set; } = "Idle";
     public string? LastError { get; set; }
+    public int RetryCount { get; set; }
+    public DateTime? NextRetryUtc { get; set; }
 }
 
 public sealed class SynchronizationLog

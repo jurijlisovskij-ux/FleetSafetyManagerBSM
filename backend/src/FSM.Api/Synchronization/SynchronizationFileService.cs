@@ -13,7 +13,9 @@ public sealed class SynchronizationFileService
         {
             "reports",
             "certificates",
-            "service-requests"
+            "service-requests",
+            "inspection-reports",
+            "inspection-attachments"
         };
 
     private readonly FsmDbContext db;

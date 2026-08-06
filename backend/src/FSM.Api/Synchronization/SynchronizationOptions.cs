@@ -15,4 +15,10 @@ public sealed class SynchronizationOptions
     public bool AllowInsecureHttp { get; set; }
     public long MaximumFileSizeBytes { get; set; } = 100L * 1024L * 1024L;
     public int SchedulerPollSeconds { get; set; } = 60;
+    public int MaximumRetryMinutes { get; set; } = 60;
+    public int InitialRetrySeconds { get; set; } = 30;
+    public int DiscoveryPort { get; set; } = 50820;
+    public int DiscoveryHttpPort { get; set; } = 8080;
+    public int DiscoveryTimeoutMilliseconds { get; set; } = 1500;
+    public string AdvertisedBaseUrl { get; set; } = string.Empty;
 }

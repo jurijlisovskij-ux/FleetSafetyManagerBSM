@@ -125,6 +125,7 @@ public sealed class FsmDbContext(DbContextOptions<FsmDbContext> options)
             entity.HasKey(x => x.VesselId);
             entity.Property(x => x.RemoteBaseUrl).HasMaxLength(500);
             entity.Property(x => x.TokenHash).HasMaxLength(128);
+            entity.Property(x => x.ActivationCodeHash).HasMaxLength(128);
             entity.Property(x => x.LastStatus).HasMaxLength(20).IsRequired();
             entity.Property(x => x.CurrentStage).HasMaxLength(80).IsRequired();
             entity.HasOne(x => x.Vessel)

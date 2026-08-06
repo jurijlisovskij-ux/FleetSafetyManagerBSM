@@ -46,11 +46,29 @@ public sealed class VesselAccessService(
         if (isShipEdition &&
             string.Equals(role, "Crew", StringComparison.OrdinalIgnoreCase))
         {
-            if (!configuredShipVesselId.HasValue)
-                return Array.Empty<Vessel>();
+            var localVesselId = configuredShipVesselId;
+            if (!localVesselId.HasValue)
+            {
+                localVesselId = await db.SynchronizationSettings
+                    .AsNoTracking()
+                    .Where(x => x.Enabled && x.ProtectedToken != null &&
+                        x.RemoteBaseUrl != null)
+                    .Select(x => (Guid?)x.VesselId)
+                    .FirstOrDefaultAsync(cancellationToken);
+            }
+            if (!localVesselId.HasValue)
+            {
+                var legacyVessels = await query
+                    .OrderBy(x => x.VesselName)
+                    .Take(2)
+                    .ToListAsync(cancellationToken);
+                return legacyVessels.Count == 1
+                    ? legacyVessels
+                    : Array.Empty<Vessel>();
+            }
 
             return await query
-                .Where(vessel => vessel.Id == configuredShipVesselId.Value)
+                .Where(vessel => vessel.Id == localVesselId.Value)
                 .OrderBy(x => x.VesselName)
                 .ThenBy(x => x.Id)
                 .Take(1)

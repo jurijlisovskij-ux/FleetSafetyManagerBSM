@@ -1,4 +1,5 @@
 using FSM.Api.Authorization;
+using FSM.Api.Synchronization;
 using FSM.Domain.Entities;
 using FSM.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
@@ -20,7 +21,8 @@ public sealed record SaveVesselRequest(
 [Route("api/vessels")]
 public sealed class VesselsController(
     FsmDbContext db,
-    VesselAccessService vesselAccess) : ControllerBase
+    VesselAccessService vesselAccess,
+    SynchronizationProvisioningService provisioning) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> GetAssigned(
@@ -92,6 +94,7 @@ public sealed class VesselsController(
         };
 
         db.Vessels.Add(vessel);
+        var (_, activationCode) = provisioning.ProvisionNewVessel(vessel);
         var savedRecords = await db.SaveChangesAsync(cancellationToken);
         if (savedRecords < 1)
         {
@@ -126,6 +129,7 @@ public sealed class VesselsController(
                 persisted.CompanyName,
                 persisted.InvoicingDetails,
                 persisted.AccountingEmail,
+                activationCode,
                 DisplayName =
                     $"{persisted.VesselName} (IMO {persisted.ImoNumber})"
             });

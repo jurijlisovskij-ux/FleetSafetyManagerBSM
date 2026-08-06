@@ -49,6 +49,8 @@ foreach ($folder in @(
     "Documents\reports",
     "Documents\certificates",
     "Documents\service-requests",
+    "Documents\inspection-reports",
+    "Documents\inspection-attachments",
     "Backups",
     "Logs"
 )) {

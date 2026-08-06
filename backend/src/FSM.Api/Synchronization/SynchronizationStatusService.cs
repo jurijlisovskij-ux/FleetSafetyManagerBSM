@@ -42,15 +42,27 @@ public sealed class SynchronizationStatusService(
                   (!string.IsNullOrWhiteSpace(setting.ProtectedToken) ||
                    !string.IsNullOrWhiteSpace(options.VesselToken))
                 : setting.Enabled &&
-                  !string.IsNullOrWhiteSpace(setting.TokenHash) &&
-                  !string.IsNullOrWhiteSpace(setting.RemoteBaseUrl);
+                  !string.IsNullOrWhiteSpace(setting.TokenHash);
             DateTime? nextAttempt = null;
             if (edition.Equals("Ship", StringComparison.OrdinalIgnoreCase) &&
                 setting.Enabled && setting.AutomaticIntervalHours > 0)
             {
-                nextAttempt = (setting.LastAttemptUtc ?? DateTime.UtcNow)
+                nextAttempt = setting.NextRetryUtc ??
+                    (setting.LastSynchronizationUtc ?? DateTime.UtcNow)
                     .AddHours(setting.AutomaticIntervalHours);
             }
+
+            var connectionState = setting.CurrentStage switch
+            {
+                "WaitingForInternet" => "WaitingForInternet",
+                "Checking connection..." or
+                "Uploading changes..." or
+                "Downloading updates..." or
+                "Synchronizing" => "Synchronizing",
+                "Failed" => "Failed",
+                _ when setting.LastSynchronizationUtc.HasValue => "Connected",
+                _ => "WaitingForInternet"
+            };
 
             result.Add(new SynchronizationStatusItem(
                 vessel.Id,
@@ -66,7 +78,9 @@ public sealed class SynchronizationStatusService(
                 setting.LastError,
                 setting.Enabled,
                 setting.AllowInsecureHttp,
-                nextAttempt));
+                nextAttempt,
+                connectionState,
+                setting.RetryCount));
         }
 
         return result;
@@ -108,7 +122,30 @@ public sealed class SynchronizationStatusService(
                      x.LastModifiedUtc > sinceUtc,
                 cancellationToken);
 
-        return vesselChanges + equipmentChanges +
-            assignmentChanges + userChanges;
+        var medicineChanges = await db.MedicineItems
+            .IgnoreQueryFilters()
+            .CountAsync(x => x.VesselId == vesselId &&
+                x.LastModifiedUtc > sinceUtc, cancellationToken);
+        var medicineConfigurationChanges = await db.VesselMedicineConfigurations
+            .IgnoreQueryFilters()
+            .CountAsync(x => x.VesselId == vesselId &&
+                x.LastModifiedUtc > sinceUtc, cancellationToken);
+        var inspectionChanges = await db.InspectionReports
+            .IgnoreQueryFilters()
+            .CountAsync(x => x.VesselId == vesselId &&
+                x.LastModifiedUtc > sinceUtc, cancellationToken);
+        var reportIds = await db.InspectionReports
+            .IgnoreQueryFilters()
+            .Where(x => x.VesselId == vesselId)
+            .Select(x => x.Id)
+            .ToListAsync(cancellationToken);
+        var inspectionItemChanges = await db.InspectionReportItems
+            .IgnoreQueryFilters()
+            .CountAsync(x => reportIds.Contains(x.InspectionReportId) &&
+                x.LastModifiedUtc > sinceUtc, cancellationToken);
+
+        return vesselChanges + equipmentChanges + assignmentChanges +
+            userChanges + medicineChanges + medicineConfigurationChanges +
+            inspectionChanges + inspectionItemChanges;
     }
 }

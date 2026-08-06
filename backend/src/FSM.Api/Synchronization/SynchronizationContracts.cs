@@ -194,4 +194,34 @@ public sealed record SynchronizationStatusItem(
     string? LastError,
     bool Enabled,
     bool AllowInsecureHttp,
-    DateTime? NextAutomaticAttemptUtc);
+    DateTime? NextAutomaticAttemptUtc,
+    string ConnectionState,
+    int RetryCount);
+
+public sealed record ActivationVesselItem(
+    Guid VesselId,
+    string VesselName,
+    string ImoNumber);
+
+public sealed record OfficeActivationCatalog(
+    string ApplicationVersion,
+    IReadOnlyList<ActivationVesselItem> Vessels);
+
+public sealed record ConnectActivationRequest(
+    Guid VesselId,
+    string ActivationCode,
+    string ApplicationVersion);
+
+public sealed record ActivationCredential(
+    Guid VesselId,
+    string VesselName,
+    string ImoNumber,
+    string? Flag,
+    string? CompanyName,
+    Guid SynchronizationIdentity,
+    string SynchronizationToken,
+    int AutomaticIntervalHours);
+
+public sealed record ActivateShipRequest(
+    Guid VesselId,
+    string ActivationCode);

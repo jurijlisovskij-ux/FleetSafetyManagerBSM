@@ -73,7 +73,7 @@ public sealed class SynchronizationController(
         });
     }
 
-    [Authorize]
+    [Authorize(Roles = "OfficeAdmin")]
     [HttpGet("logs")]
     public async Task<IActionResult> GetLogs(
         Guid? vesselId,
@@ -119,6 +119,81 @@ public sealed class SynchronizationController(
         return Ok(logs);
     }
 
+    [Authorize(Roles = "OfficeAdmin")]
+    [HttpGet("advanced")]
+    public async Task<IActionResult> AdvancedDiagnostics(
+        CancellationToken cancellationToken)
+    {
+        if (!edition.Equals("Office", StringComparison.OrdinalIgnoreCase))
+            return Forbid();
+        var queueCounts = await db.SynchronizationTransfers.AsNoTracking()
+            .GroupBy(x => x.VesselId)
+            .Select(x => new { VesselId = x.Key, Count = x.Count() })
+            .ToDictionaryAsync(x => x.VesselId, x => x.Count, cancellationToken);
+        var settings = await db.SynchronizationSettings.AsNoTracking()
+            .OrderBy(x => x.Vessel!.VesselName)
+            .Select(x => new
+            {
+                x.VesselId,
+                vessel = x.Vessel!.VesselName,
+                endpoint = x.RemoteBaseUrl,
+                tokenFingerprint = x.TokenHash == null
+                    ? null
+                    : x.TokenHash.Substring(0, 12),
+                x.RetryCount,
+                x.NextRetryUtc,
+                x.LastAttemptUtc,
+                x.LastSynchronizationUtc,
+                x.LastStatus,
+                x.LastError
+            })
+            .ToListAsync(cancellationToken);
+        var recentRequests = await db.SynchronizationLogs.AsNoTracking()
+            .OrderByDescending(x => x.DateUtc)
+            .Take(100)
+            .Select(x => new
+            {
+                x.DateUtc,
+                x.VesselId,
+                x.EndpointHost,
+                x.HttpStatus,
+                x.DurationMilliseconds,
+                x.Phase,
+                x.Result,
+                x.ErrorMessage
+            })
+            .ToListAsync(cancellationToken);
+        return Ok(new
+        {
+            healthChecks = new
+            {
+                database = await db.Database.CanConnectAsync(cancellationToken)
+                    ? "Available"
+                    : "Unavailable",
+                applicationVersion = options.ApplicationVersion,
+                serverUtc = DateTime.UtcNow
+            },
+            vessels = settings.Select(x => new
+            {
+                x.VesselId,
+                x.vessel,
+                x.endpoint,
+                token = x.tokenFingerprint is null
+                    ? "Not configured"
+                    : $"Configured · SHA-256 {x.tokenFingerprint}…",
+                uploadQueue = queueCounts.GetValueOrDefault(x.VesselId),
+                downloadQueue = 0,
+                x.RetryCount,
+                x.NextRetryUtc,
+                x.LastAttemptUtc,
+                x.LastSynchronizationUtc,
+                x.LastStatus,
+                x.LastError
+            }),
+            httpRequests = recentRequests
+        });
+    }
+
     [Authorize]
     [HttpPost("run/{vesselId:guid}")]
     public async Task<IActionResult> Run(
@@ -135,14 +210,40 @@ public sealed class SynchronizationController(
         {
             return Ok(await client.RunAsync(vesselId, cancellationToken));
         }
+        catch (HttpRequestException exception) when (!exception.StatusCode.HasValue)
+        {
+            return StatusCode(
+                StatusCodes.Status503ServiceUnavailable,
+                new
+                {
+                    message = "No Internet connection. Synchronization will continue automatically when the connection is restored."
+                });
+        }
         catch (Exception exception) when (
             exception is InvalidOperationException or
             HttpRequestException or
             InvalidDataException)
         {
+            var waitingForInternet = await db.SynchronizationSettings
+                .AsNoTracking()
+                .Where(x => x.VesselId == vesselId)
+                .Select(x => x.CurrentStage == "WaitingForInternet")
+                .SingleOrDefaultAsync(cancellationToken);
+            if (waitingForInternet)
+            {
+                return StatusCode(
+                    StatusCodes.Status503ServiceUnavailable,
+                    new
+                    {
+                        message = "No Internet connection. Synchronization will continue automatically when the connection is restored."
+                    });
+            }
             return StatusCode(
                 StatusCodes.Status502BadGateway,
-                new { message = exception.Message });
+                new
+                {
+                    message = "Synchronization failed. It will retry automatically."
+                });
         }
     }
 

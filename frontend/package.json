@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.20.0",
   "type": "module",
+  "allowScripts": {
+    "esbuild": true
+  },
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build"

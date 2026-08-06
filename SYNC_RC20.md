@@ -1,33 +1,61 @@
 # RC20 Office ↔ Ship synchronization
 
-## Production setup
+## Normal operation
 
-1. Install Office Edition. Configure a trusted TLS certificate for the ASP.NET Core/Kestrel endpoint and bind the service to the required network interface and HTTPS port. The application accepts standard `Kestrel` endpoint/certificate configuration.
-2. Permit that single HTTPS port through the site's firewall. Do not expose the launcher/UI port broadly unless it is the configured synchronization endpoint.
-3. In Office, open **Synchronization**, select the vessel, enable synchronization, enter the externally reachable Office HTTPS URL, choose the interval, and save.
-4. Generate or rotate the vessel token. Use a unique token for every vessel.
-5. Enter a passphrase of at least 12 characters and export `FSM-Ship-Sync-<IMO>.json`. Send the protected file and its passphrase by separate approved channels.
-6. Install Ship Edition with the same immutable vessel ID and IMO. Open **Synchronization**, enter the passphrase, import the file, and select **Test Connection**.
-7. Run the first manual synchronization and confirm the vessel, counts, documents, and status before enabling the automatic interval.
+RC20-026 synchronization is zero-configuration for Office Administrators,
+Technical Superintendents, and Ship Crew.
 
-The token is encrypted in the exported file with AES-GCM and a PBKDF2-derived key. It is protected by ASP.NET Core Data Protection after import. Never paste it into normal logs or support tickets.
+1. The Office Administrator creates a vessel. Fleet Safety Manager creates its
+   synchronization identity, credentials, 24-hour schedule, initial state, and
+   a one-time activation code automatically.
+2. The administrator copies the displayed `FSM-XXXX-XXXX-XXXX` activation code
+   to the vessel. The code is scoped to that vessel, expires after seven days,
+   and becomes invalid as soon as it is used. A replacement code can be
+   generated from the vessel profile.
+3. After Ship installation, the crew selects the discovered vessel, enters the
+   activation code, and selects **Connect**. Fleet Safety Manager obtains and
+   stores the Office endpoint and protected credential internally, then
+   downloads the vessel configuration and assigned operational data.
+4. Synchronization runs at application startup, after important local changes,
+   on the 24-hour schedule, and after connectivity returns. Failed network
+   attempts use exponential backoff. The crew continues working while offline.
 
-## Explicit local-network HTTP test mode
+The normal UI never requests or displays endpoints, tokens, HTTP modes,
+provisioning phases, upload/download stages, API responses, or technical logs.
+**Settings → Synchronization** contains the simplified state, last/next time,
+pending-change count, and the Ship **Synchronize Now** action.
 
-HTTPS remains required by default. For an administrator-approved isolated LAN test only:
+## Network discovery
 
-1. During Office installation select **Enable Office synchronization from other computers on the private network (TCP 8080)**. This changes the Office service binding to `0.0.0.0:8080` and creates only the private-profile inbound rule `Fleet Safety Manager Office Synchronization` for TCP 8080.
-2. In the Office vessel synchronization settings, enter the effective URL such as `http://192.168.1.10:8080`, enable **Allow HTTP for explicitly approved local-network testing**, and export a new protected Ship configuration.
-3. Import it on Ship and use **Test Connection** before synchronizing.
+The Office installer binds the service to private-network TCP 8080 and creates
+private-profile firewall rules for that endpoint and UDP 50820 discovery.
+Ship discovers Office on the local network through the internal RC20 discovery
+service. A centrally managed endpoint may also be supplied through deployment
+configuration; it is never entered by crew.
 
-Ship Edition never creates an inbound firewall rule. Clearing the installer task or uninstalling removes the Office synchronization rule. Changing the synchronization port requires updating the service binding and replacing the firewall rule with one restricted to the new port.
+Production deployments can configure a trusted Kestrel HTTPS endpoint and the
+internal advertised endpoint through deployment configuration. Plain HTTP is
+enabled by the packaged installer only because the bundled service endpoint is
+private-network HTTP. No HTTP/HTTPS choice appears in the application UI.
 
-## Health and diagnostics
+## Advanced Diagnostics
 
-- `GET /api/synchronization/health` returns edition, application version, UTC time, database availability, and synchronization availability without secrets.
-- Office **Export Support Diagnostics** creates `FSM-Sync-Diagnostics-<date>.zip` with sanitized settings, versions, vessel identity, recent safe synchronization logs, endpoint health, SQLite integrity status, and firewall-rule status.
-- The export excludes passwords, password hashes, recovery keys, synchronization tokens, and document contents.
+Only an authenticated Office Administrator can open
+**Settings → Advanced Diagnostics**. It contains endpoint state, a non-secret
+credential fingerprint, upload/download queue counts, retry state, sanitized
+logs, HTTP response codes, request timing, and health checks. Diagnostic exports
+exclude plaintext credentials, passwords, password hashes, recovery keys, and
+document content.
+
+`GET /api/synchronization/health` remains an anonymous, secret-free availability
+probe. Other technical synchronization endpoints remain internal compatibility
+surfaces for existing installations and automated verification.
 
 ## Upgrade persistence
 
-The installer upgrade path preserves `Data`, `Documents`, `Backups`, and `Logs` before activating the new RC20 release. Synchronization settings, protected credentials, cursors, transfer-resume metadata, and Data Protection keys live under these persistent application-data folders.
+The installer preserves `Data`, `Documents`, `Backups`, and `Logs` before
+activating a newer RC20 release. Existing vessel identity, credentials, cursors,
+transfer-resume metadata, Data Protection keys, databases, and documents are
+retained. RC19 databases receive the synchronization tables and automatic Office
+provisioning during startup; a Ship database that already contains its local
+vessel opens without reactivation.

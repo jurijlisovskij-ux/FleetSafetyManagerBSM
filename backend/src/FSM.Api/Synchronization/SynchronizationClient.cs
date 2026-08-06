@@ -163,7 +163,9 @@ public sealed class SynchronizationClient(
             setting.LastSynchronizationUtc = DateTime.UtcNow;
             setting.LastStatus = status;
             setting.LastError = message;
-            setting.CurrentStage = "Synchronization completed.";
+            setting.CurrentStage = "Connected";
+            setting.RetryCount = 0;
+            setting.NextRetryUtc = null;
             await db.SaveChangesAsync(cancellationToken);
             await RecordLogAsync(
                 vesselId,
@@ -195,7 +197,15 @@ public sealed class SynchronizationClient(
                 setting.LastAttemptUtc = DateTime.UtcNow;
                 setting.LastStatus = "Failed";
                 setting.LastError = exception.Message;
-                setting.CurrentStage = "Failed";
+                setting.RetryCount++;
+                var retrySeconds = Math.Min(
+                    Math.Max(1, options.InitialRetrySeconds) *
+                        Math.Pow(2, Math.Max(0, setting.RetryCount - 1)),
+                    Math.Max(1, options.MaximumRetryMinutes) * 60d);
+                setting.NextRetryUtc = DateTime.UtcNow.AddSeconds(retrySeconds);
+                setting.CurrentStage = IsConnectivityFailure(exception)
+                    ? "WaitingForInternet"
+                    : "Failed";
                 await db.SaveChangesAsync(CancellationToken.None);
                 await RecordLogAsync(
                     vesselId,
@@ -478,4 +488,8 @@ public sealed class SynchronizationClient(
             null,
             response.StatusCode);
     }
+
+    private static bool IsConnectivityFailure(Exception exception) =>
+        exception is HttpRequestException http && !http.StatusCode.HasValue ||
+        exception is TaskCanceledException;
 }

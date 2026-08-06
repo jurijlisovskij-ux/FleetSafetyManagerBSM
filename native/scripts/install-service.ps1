@@ -22,6 +22,7 @@ $configPath = Join-Path $InstallFolder "appsettings.json"
 $config = Get-Content $configPath -Raw | ConvertFrom-Json
 $config.Application.Edition = $Edition
 $config.Application.ShipVesselId = $ShipVesselId
+$config.Synchronization.AllowInsecureHttp = $true
 $config | ConvertTo-Json -Depth 10 | Set-Content $configPath -Encoding UTF8
 
 $exe = Join-Path $InstallFolder "FSM.Api.exe"
@@ -38,10 +39,14 @@ sc.exe create "FleetSafetyManager" `
     start= auto DisplayName= "Fleet Safety Manager" | Out-Null
 
 netsh advfirewall firewall delete rule name="Fleet Safety Manager Office Synchronization" | Out-Null
+netsh advfirewall firewall delete rule name="Fleet Safety Manager Office Discovery" | Out-Null
 if ($Edition -eq "Office") {
     netsh advfirewall firewall add rule `
         name="Fleet Safety Manager Office Synchronization" `
         dir=in action=allow protocol=TCP localport=8080 profile=private | Out-Null
+    netsh advfirewall firewall add rule `
+        name="Fleet Safety Manager Office Discovery" `
+        dir=in action=allow protocol=UDP localport=50820 profile=private | Out-Null
 }
 
 Start-Service "FleetSafetyManager"

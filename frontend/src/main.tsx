@@ -38,6 +38,7 @@ type Vessel = {
   invoicingDetails?: string;
   accountingEmail?: string;
   displayName: string;
+  activationCode?: string;
 };
 
 type EquipmentCategory =
@@ -142,6 +143,23 @@ type SynchronizationStatus = {
   enabled: boolean;
   allowInsecureHttp: boolean;
   nextAutomaticAttemptUtc?: string;
+  connectionState:
+    | "Connected"
+    | "WaitingForInternet"
+    | "Synchronizing"
+    | "Failed";
+  retryCount: number;
+};
+
+type ActivationState = {
+  edition: "Office" | "Ship";
+  requiresActivation: boolean;
+  vessel?: {
+    vesselId: string;
+    vesselName: string;
+    imoNumber: string;
+    lastSynchronizationUtc?: string;
+  };
 };
 
 type SynchronizationStatusResponse = {
@@ -215,6 +233,23 @@ function formatSynchronizationDateTime(value?: string) {
   };
 }
 
+function synchronizationStateLabel(item: SynchronizationStatus) {
+  return {
+    Connected: "Connected",
+    WaitingForInternet: "Waiting for Internet",
+    Synchronizing: "Synchronizing",
+    Failed: "Synchronization Failed",
+  }[item.connectionState];
+}
+
+function synchronizationStateClass(item: SynchronizationStatus) {
+  return item.connectionState === "Connected"
+    ? "success"
+    : item.connectionState === "Failed"
+      ? "failed"
+      : "warning";
+}
+
 function categoryToApi(category: Equipment["category"]) {
   return {
     LSA: 0,
@@ -228,7 +263,116 @@ function inspectionToApi(value: Equipment["inspectionBy"]) {
   return value === "Crew" ? 0 : 1;
 }
 
+function ShipActivationPage({
+  onActivated,
+}: {
+  onActivated: () => Promise<void>;
+}) {
+  const [vessels, setVessels] = useState<ActivationVesselItem[]>([]);
+  const [vesselId, setVesselId] = useState("");
+  const [activationCode, setActivationCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function discover() {
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/synchronization/activation/vessels`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) return;
+      const body: { vessels: ActivationVesselItem[] } = await response.json();
+      setVessels(body.vessels);
+      setVesselId(current => current || body.vessels[0]?.vesselId || "");
+    } catch {
+      // Automatic discovery continues while the application remains open.
+    }
+  }
+
+  useEffect(() => {
+    void discover();
+    const timer = window.setInterval(() => void discover(), 5000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  async function connect() {
+    if (!vesselId || !activationCode.trim()) return;
+    setBusy(true);
+    setError("");
+    setMessage("Synchronizing...");
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/synchronization/activation`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ vesselId, activationCode }),
+        },
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok && !body?.activated)
+        throw new Error(body?.message ?? "Activation failed.");
+      setMessage(body?.message ?? "Synchronization completed successfully.");
+      await new Promise(resolve => window.setTimeout(resolve, 1200));
+      await onActivated();
+    } catch (exception) {
+      setMessage("");
+      setError((exception as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="login-page activation-page">
+      <div className="card activation-card">
+        <h1>Welcome</h1>
+        {error && <div className="error">{error}</div>}
+        {message && <div className="success-message">{message}</div>}
+        {vessels.length === 0 && !error &&
+          <p className="offline-message">Waiting for Internet connection…</p>}
+        <label>
+          Select Vessel
+          <select value={vesselId} onChange={event => setVesselId(event.target.value)}>
+            {vessels.length === 0 && <option value="">Searching for vessels...</option>}
+            {vessels.map(vessel => (
+              <option key={vessel.vesselId} value={vessel.vesselId}>
+                {vessel.vesselName}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Activation Code
+          <input
+            value={activationCode}
+            placeholder="FSM-XXXX-XXXX-XXXX"
+            autoComplete="off"
+            onChange={event => setActivationCode(event.target.value)}
+          />
+        </label>
+        <button
+          className="primary"
+          disabled={busy || !vesselId || !activationCode.trim()}
+          onClick={connect}
+        >
+          {busy ? "Connecting..." : "Connect"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+type ActivationVesselItem = {
+  vesselId: string;
+  vesselName: string;
+  imoNumber: string;
+};
+
 function App() {
+  const [activationState, setActivationState] =
+    useState<ActivationState | null>(null);
   const [username, setUsername] = useState("superintendent@fsm.local");
   const [password, setPassword] = useState("Super123!");
   const [user, setUser] = useState<LoginResult | null>(null);
@@ -259,6 +403,8 @@ function App() {
     useState(false);
   const [showSynchronization, setShowSynchronization] =
     useState(false);
+  const [showAdvancedDiagnostics, setShowAdvancedDiagnostics] =
+    useState(false);
   const [showMedicine, setShowMedicine] = useState(false);
   const [collapsed, setCollapsed] =
     useState<Set<Equipment["category"]>>(new Set());
@@ -267,6 +413,21 @@ function App() {
   const [showRecovery, setShowRecovery] = useState(false);
   const [recoveryFile, setRecoveryFile] = useState<File | null>(null);
   const [newPassword, setNewPassword] = useState("");
+
+  async function refreshActivationState() {
+    const response = await fetch(
+      `${apiBaseUrl}/synchronization/activation/state`,
+      { cache: "no-store" },
+    );
+    if (!response.ok)
+      throw new Error("Unable to load application activation state.");
+    setActivationState(await response.json());
+  }
+
+  useEffect(() => {
+    void refreshActivationState()
+      .catch(error => setError((error as Error).message));
+  }, []);
 
   async function refreshFleetData() {
     if (!user) return;
@@ -292,9 +453,6 @@ function App() {
     setVessels(vesselItems);
     setDashboard(dashboardData);
 
-    if (user.edition === "Ship" && vesselItems.length === 1) {
-      setCurrentVessel(vesselItems[0]);
-    }
   }
 
   useEffect(() => {
@@ -334,6 +492,14 @@ function App() {
   const singleVesselDashboard =
     (dashboard?.vesselRows.length ?? 0) === 1;
   const showUpcomingVesselColumn = user?.role === "OfficeAdmin";
+
+  if (!activationState) {
+    return <div className="login-page"><div className="card"><h1>Fleet Safety Manager</h1><p>Starting...</p>{error && <div className="error">{error}</div>}</div></div>;
+  }
+
+  if (activationState.requiresActivation) {
+    return <ShipActivationPage onActivated={refreshActivationState} />;
+  }
 
   if (!user) {
     return (
@@ -411,7 +577,7 @@ function App() {
         <div className="session">
           <span>{user.fullName} · {user.role}</span>
           <button onClick={() => setShowSynchronization(true)}>
-            Synchronize
+            Settings
           </button>
           {currentVessel && user.edition !== "Ship" &&
             <button
@@ -448,6 +614,7 @@ function App() {
             setShowUserAdministration(false);
             setShowCopyEquipment(false);
             setShowSynchronization(false);
+            setShowAdvancedDiagnostics(false);
           }}>Sign Out</button>
         </div>
       </header>
@@ -638,13 +805,9 @@ function App() {
           </section>
           )}
 
-          {user.edition === "Office" &&
-            <section className="dashboard-section">
+          <section className="dashboard-section">
               <div className="dashboard-section-heading">
                 <h2>Synchronization Status</h2>
-                <button onClick={() => setShowSynchronization(true)}>
-                  Open Log
-                </button>
               </div>
               <div className="dashboard-table-wrap">
                 <table className="dashboard-table synchronization-table">
@@ -673,8 +836,8 @@ function App() {
                           </td>
                           <td>{item.pendingChanges}</td>
                           <td>
-                            <span className={`sync-state ${item.status.toLowerCase()}`}>
-                              {item.status}
+                            <span className={`sync-state ${synchronizationStateClass(item)}`}>
+                              {synchronizationStateLabel(item)}
                             </span>
                           </td>
                         </tr>
@@ -683,7 +846,7 @@ function App() {
                   </tbody>
                 </table>
               </div>
-            </section>}
+            </section>
         </main>
       ) : (
         <main className="workspace">
@@ -714,12 +877,6 @@ function App() {
             </div>
             <div className="workspace-actions">
               <span className="muted">Equipment Register</span>
-              <button
-                type="button"
-                onClick={() => setShowSynchronization(true)}
-              >
-                Synchronization
-              </button>
               <button
                 onClick={() => setShowVesselProfile(true)}
               >
@@ -1034,16 +1191,36 @@ function App() {
           onClose={() => setShowCreateVessel(false)}
           onCreated={async () => {
             await refreshFleetData();
-            setShowCreateVessel(false);
           }}
         />}
 
       {showSynchronization &&
-        <SynchronizationDialog
+        <SettingsSynchronizationDialog
           token={user.token}
           userRole={user.role}
           initialVesselId={currentVessel?.id}
           onClose={() => setShowSynchronization(false)}
+          onAdvancedDiagnostics={() => {
+            setShowSynchronization(false);
+            setShowAdvancedDiagnostics(true);
+          }}
+          onStatusChanged={items => {
+            setDashboard(current => current
+              ? { ...current, synchronization: items }
+              : current);
+          }}
+          onFleetChanged={() => {
+            void refreshFleetData()
+              .catch(error => setError((error as Error).message));
+          }}
+        />}
+
+      {showAdvancedDiagnostics && user.role === "OfficeAdmin" &&
+        <SynchronizationDialog
+          token={user.token}
+          userRole={user.role}
+          initialVesselId={currentVessel?.id}
+          onClose={() => setShowAdvancedDiagnostics(false)}
           onStatusChanged={items => {
             setDashboard(current => current
               ? { ...current, synchronization: items }
@@ -1065,6 +1242,142 @@ function App() {
 
 
 
+function SettingsSynchronizationDialog({
+  token,
+  userRole,
+  initialVesselId,
+  onClose,
+  onAdvancedDiagnostics,
+  onStatusChanged,
+  onFleetChanged,
+}: {
+  token: string;
+  userRole: LoginResult["role"];
+  initialVesselId?: string;
+  onClose: () => void;
+  onAdvancedDiagnostics: () => void;
+  onStatusChanged: (items: SynchronizationStatus[]) => void;
+  onFleetChanged: () => void;
+}) {
+  const [response, setResponse] =
+    useState<SynchronizationStatusResponse | null>(null);
+  const [selectedVesselId, setSelectedVesselId] =
+    useState(initialVesselId ?? "");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const selected = response?.vessels.find(
+    item => item.vesselId === selectedVesselId,
+  );
+
+  async function load() {
+    const statusResponse = await authFetch(
+      `${apiBaseUrl}/synchronization/status`,
+      token,
+      { cache: "no-store" },
+    );
+    if (!statusResponse.ok)
+      throw new Error("Unable to load synchronization status.");
+    const body: SynchronizationStatusResponse = await statusResponse.json();
+    setResponse(body);
+    setSelectedVesselId(current =>
+      current || initialVesselId || body.vessels[0]?.vesselId || "");
+    onStatusChanged(body.vessels);
+    return body;
+  }
+
+  useEffect(() => {
+    void load().catch(exception => setError((exception as Error).message));
+  }, []);
+
+  async function synchronizeNow() {
+    if (!selectedVesselId) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const runResponse = await authFetch(
+        `${apiBaseUrl}/synchronization/run/${selectedVesselId}`,
+        token,
+        { method: "POST" },
+      );
+      const body = await runResponse.json().catch(() => null);
+      if (!runResponse.ok)
+        throw new Error(body?.message ?? "Synchronization failed.");
+      setMessage("Synchronization completed successfully.");
+      await load();
+      onFleetChanged();
+    } catch (exception) {
+      const detail = (exception as Error).message;
+      setError(detail.toLowerCase().includes("connect") ||
+          detail.toLowerCase().includes("network")
+        ? "No Internet connection. Synchronization will continue automatically when the connection is restored."
+        : detail);
+      await load().catch(() => undefined);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const last = formatSynchronizationDateTime(
+    selected?.lastSynchronizationUtc,
+  );
+  const next = selected?.nextAutomaticAttemptUtc
+    ? new Date(selected.nextAutomaticAttemptUtc).toLocaleString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "Automatically after connection";
+
+  return (
+    <div className="modal">
+      <div className="synchronization-dialog simplified-synchronization">
+        <div className="service-request-header">
+          <div><h2>Settings</h2><p>Synchronization</p></div>
+          <button type="button" onClick={onClose}>Close</button>
+        </div>
+        {error && <div className="error">{error}</div>}
+        {message && <div className="success-message">{message}</div>}
+        <div className="synchronization-vessel-tabs">
+          {(response?.vessels ?? []).map(item => (
+            <button key={item.vesselId}
+              className={item.vesselId === selectedVesselId ? "selected" : ""}
+              onClick={() => setSelectedVesselId(item.vesselId)}>
+              {item.vesselName}
+            </button>
+          ))}
+        </div>
+        {selected && <div className="simple-sync-status">
+          <div><span>Status</span><strong className={`sync-state ${synchronizationStateClass(selected)}`}>
+            {synchronizationStateLabel(selected)}
+          </strong></div>
+          <div><span>Last synchronization</span><strong>{last.date}</strong><small>{last.time}</small></div>
+          <div><span>Next synchronization</span><strong>{next}</strong></div>
+          <div><span>Pending changes</span><strong>{selected.pendingChanges}</strong></div>
+        </div>}
+        {busy && <div className="manual-sync-window" aria-live="polite">
+          <strong>Synchronizing...</strong>
+          <div className="indeterminate-progress"><span /></div>
+          <p>Please wait...</p>
+        </div>}
+        <div className="synchronization-actions">
+          {response?.edition === "Ship" &&
+            <button className="primary" disabled={busy || !selected}
+              onClick={synchronizeNow}>Synchronize Now</button>}
+          {userRole === "OfficeAdmin" &&
+            <button disabled={busy} onClick={onAdvancedDiagnostics}>
+              Advanced Diagnostics
+            </button>}
+        </div>
+        {selected?.connectionState === "WaitingForInternet" &&
+          <p className="offline-message">Waiting for Internet connection…</p>}
+      </div>
+    </div>
+  );
+}
+
 function SynchronizationDialog({
   token,
   userRole,
@@ -1083,6 +1396,8 @@ function SynchronizationDialog({
   const [statusResponse, setStatusResponse] =
     useState<SynchronizationStatusResponse | null>(null);
   const [logs, setLogs] = useState<SynchronizationLog[]>([]);
+  const [advancedDetails, setAdvancedDetails] =
+    useState<Record<string, unknown> | null>(null);
   const [selectedVesselId, setSelectedVesselId] =
     useState(initialVesselId ?? "");
   const [intervalHours, setIntervalHours] =
@@ -1148,10 +1463,20 @@ function SynchronizationDialog({
     setLogs(await response.json());
   }
 
+  async function loadAdvancedDetails() {
+    const response = await authFetch(
+      `${apiBaseUrl}/synchronization/advanced`,
+      token,
+    );
+    if (!response.ok)
+      throw new Error("Unable to load advanced diagnostics.");
+    setAdvancedDetails(await response.json());
+  }
+
   async function refresh() {
     setError("");
     try {
-      await Promise.all([loadStatus(), loadLogs()]);
+      await Promise.all([loadStatus(), loadLogs(), loadAdvancedDetails()]);
     } catch (exception) {
       setError((exception as Error).message);
     }
@@ -1371,7 +1696,7 @@ function SynchronizationDialog({
       <div className="synchronization-dialog">
         <div className="service-request-header">
           <div>
-            <h2>Synchronization</h2>
+            <h2>Advanced Diagnostics</h2>
             <p>
               {statusResponse?.edition ?? "—"} Edition · {statusResponse?.applicationVersion ?? "RC20"}
             </p>
@@ -1380,6 +1705,11 @@ function SynchronizationDialog({
         </div>
 
         {error && <div className="error">{error}</div>}
+
+        {advancedDetails && <details className="synchronization-log" open>
+          <summary>Endpoint, token, queues, retries and health checks</summary>
+          <pre>{JSON.stringify(advancedDetails, null, 2)}</pre>
+        </details>}
 
         <div className="synchronization-vessel-tabs">
           {(statusResponse?.vessels ?? []).map(item => (
@@ -2264,6 +2594,7 @@ function CreateVesselDialog({
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [created, setCreated] = useState<Vessel | null>(null);
   const [draft, setDraft] = useState({
     vesselName: "",
     imoNumber: "",
@@ -2316,7 +2647,9 @@ function CreateVesselDialog({
         );
       }
 
-      await onCreated(await response.json());
+      const item: Vessel = await response.json();
+      setCreated(item);
+      await onCreated(item);
     } catch (exception) {
       setError((exception as Error).message);
     } finally {
@@ -2339,6 +2672,19 @@ function CreateVesselDialog({
         </div>
 
         {error && <div className="error">{error}</div>}
+
+        {created ? <div className="activation-code-panel">
+          <h3>Activation Code</h3>
+          <code>{created.activationCode}</code>
+          <button className="primary" onClick={() =>
+            navigator.clipboard.writeText(created.activationCode ?? "")}>
+            Copy
+          </button>
+          <p>This one-time code expires in 7 days.</p>
+          <div className="service-request-actions">
+            <button type="button" onClick={onClose}>Finish</button>
+          </div>
+        </div> : <>
 
         <div className="vessel-profile-form">
           <label>
@@ -2431,6 +2777,7 @@ function CreateVesselDialog({
             {busy ? "Creating..." : "Create Vessel"}
           </button>
         </div>
+        </>}
       </div>
     </div>
   );
@@ -2456,6 +2803,7 @@ function VesselProfileDialog({
     useState(false);
   const [profileError, setProfileError] =
     useState("");
+  const [activationCode, setActivationCode] = useState("");
 
   const [draft, setDraft] = useState({
     vesselName: vessel.vesselName,
@@ -2549,6 +2897,26 @@ function VesselProfileDialog({
     }
   }
 
+  async function generateActivationCode() {
+    setProfileBusy(true);
+    setProfileError("");
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/synchronization/activation/code/${vessel.id}`,
+        token,
+        { method: "POST" },
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok)
+        throw new Error(body?.message ?? "Unable to generate an activation code.");
+      setActivationCode(body.activationCode);
+    } catch (exception) {
+      setProfileError((exception as Error).message);
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+
   return (
     <div className="modal">
       <div className="vessel-profile-dialog">
@@ -2573,6 +2941,18 @@ function VesselProfileDialog({
           <div className="error">
             {profileError}
           </div>}
+
+        {canEdit && <div className="activation-code-panel">
+          <h3>Ship Activation</h3>
+          {activationCode ? <>
+            <code>{activationCode}</code>
+            <button type="button" onClick={() =>
+              navigator.clipboard.writeText(activationCode)}>Copy</button>
+            <p>This one-time code expires in 7 days.</p>
+          </> :
+            <button type="button" disabled={profileBusy}
+              onClick={generateActivationCode}>Generate Activation Code</button>}
+        </div>}
 
         <div className="vessel-profile-form">
           <label>

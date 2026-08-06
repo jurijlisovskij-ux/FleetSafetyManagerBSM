@@ -38,6 +38,12 @@ public static class SchemaUpgrade
             await CreateSynchronizationTablesAsync(db);
             await AddColumnIfMissingAsync(db, "synchronization_settings", "Enabled", "INTEGER NOT NULL DEFAULT 0");
             await AddColumnIfMissingAsync(db, "synchronization_settings", "AllowInsecureHttp", "INTEGER NOT NULL DEFAULT 0");
+            await AddColumnIfMissingAsync(db, "synchronization_settings", "SynchronizationIdentity", "TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'");
+            await AddColumnIfMissingAsync(db, "synchronization_settings", "ActivationCodeHash", "TEXT NULL");
+            await AddColumnIfMissingAsync(db, "synchronization_settings", "ActivationCodeExpiresUtc", "TEXT NULL");
+            await AddColumnIfMissingAsync(db, "synchronization_settings", "ActivationCodeUsedUtc", "TEXT NULL");
+            await AddColumnIfMissingAsync(db, "synchronization_settings", "RetryCount", "INTEGER NOT NULL DEFAULT 0");
+            await AddColumnIfMissingAsync(db, "synchronization_settings", "NextRetryUtc", "TEXT NULL");
             await AddColumnIfMissingAsync(db, "synchronization_logs", "EndpointHost", "TEXT NULL");
             await AddColumnIfMissingAsync(db, "synchronization_logs", "HttpStatus", "INTEGER NULL");
             await AddColumnIfMissingAsync(db, "synchronization_logs", "Phase", "TEXT NULL");
@@ -150,9 +156,13 @@ public static class SchemaUpgrade
         const string sql = """
             CREATE TABLE IF NOT EXISTS synchronization_settings (
                 VesselId TEXT NOT NULL PRIMARY KEY,
+                SynchronizationIdentity TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
                 RemoteBaseUrl TEXT NULL,
                 TokenHash TEXT NULL,
                 ProtectedToken TEXT NULL,
+                ActivationCodeHash TEXT NULL,
+                ActivationCodeExpiresUtc TEXT NULL,
+                ActivationCodeUsedUtc TEXT NULL,
                 Enabled INTEGER NOT NULL DEFAULT 0,
                 AllowInsecureHttp INTEGER NOT NULL DEFAULT 0,
                 AutomaticIntervalHours INTEGER NOT NULL DEFAULT 24,
@@ -164,6 +174,8 @@ public static class SchemaUpgrade
                 LastStatus TEXT NOT NULL DEFAULT 'Warning',
                 CurrentStage TEXT NOT NULL DEFAULT 'Idle',
                 LastError TEXT NULL,
+                RetryCount INTEGER NOT NULL DEFAULT 0,
+                NextRetryUtc TEXT NULL,
                 FOREIGN KEY (VesselId) REFERENCES vessels (Id) ON DELETE CASCADE
             );
 

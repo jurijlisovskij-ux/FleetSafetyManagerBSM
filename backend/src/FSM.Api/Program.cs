@@ -67,11 +67,14 @@ builder.Services.AddScoped<SynchronizationFileService>();
 builder.Services.AddScoped<SynchronizationExchangeService>();
 builder.Services.AddScoped<SynchronizationStatusService>();
 builder.Services.AddScoped<SynchronizationClient>();
+builder.Services.AddScoped<SynchronizationProvisioningService>();
+builder.Services.AddScoped<OfficeDiscoveryService>();
 builder.Services.AddSingleton<ShipConfigurationProtectionService>();
 builder.Services.AddScoped<VesselAccessService>();
 builder.Services.AddScoped<AuditService>();
 builder.Services.AddSingleton<RecoveryKeyService>();
 builder.Services.AddHostedService<SynchronizationWorker>();
+builder.Services.AddHostedService<SynchronizationDiscoveryWorker>();
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
 {
     options.ForwardedHeaders = ForwardedHeaders.XForwardedProto;
@@ -144,6 +147,9 @@ using (var scope = app.Services.CreateScope())
     await db.Database.EnsureCreatedAsync();
     await SchemaUpgrade.ApplyAsync(db);
     await SeedData.InitializeAsync(db);
+    await scope.ServiceProvider
+        .GetRequiredService<SynchronizationProvisioningService>()
+        .EnsureExistingInstallationsAsync();
     if (scope.ServiceProvider.GetRequiredService<RecoveryKeyService>().EnsureCreated())
     {
         scope.ServiceProvider.GetRequiredService<AuditService>()

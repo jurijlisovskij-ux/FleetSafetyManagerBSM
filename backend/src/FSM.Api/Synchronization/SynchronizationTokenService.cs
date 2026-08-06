@@ -43,11 +43,18 @@ public sealed class SynchronizationTokenService
         var setting = await GetOrCreateSettingAsync(
             vesselId,
             cancellationToken);
+        var token = InitializeCredentials(setting);
+        setting.LastModifiedUtc = DateTime.UtcNow;
+        await db.SaveChangesAsync(cancellationToken);
+        return token;
+    }
+
+    public string InitializeCredentials(SynchronizationSetting setting)
+    {
         var token = CreateToken();
         setting.TokenHash = HashToken(token);
         setting.ProtectedToken = protector.Protect(token);
         setting.LastModifiedUtc = DateTime.UtcNow;
-        await db.SaveChangesAsync(cancellationToken);
         return token;
     }
 
@@ -150,6 +157,7 @@ public sealed class SynchronizationTokenService
         setting = new SynchronizationSetting
         {
             VesselId = vesselId,
+            SynchronizationIdentity = Guid.NewGuid(),
             AutomaticIntervalHours = NormalizeInterval(
                 options.AutomaticIntervalHours)
         };

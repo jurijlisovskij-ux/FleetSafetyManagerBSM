@@ -31,6 +31,7 @@ SolidCompression=yes
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 PrivilegesRequired=admin
+UsedUserAreasWarning=no
 WizardStyle=modern
 SetupLogging=yes
 CloseApplications=yes
@@ -40,9 +41,6 @@ DisableProgramGroupPage=yes
 UninstallDisplayName={#AppName} {#MyEdition}
 UninstallDisplayIcon={app}\FleetSafetyManager.ico
 SetupIconFile=FleetSafetyManager.ico
-
-[Tasks]
-Name: "officesyncfirewall"; Description: "Enable Office synchronization from other computers on the private network (TCP 8080)"; Flags: checkedonce; Check: IsOfficeEdition
 
 [Files]
 Source: "..\publish\*"; DestDir: "{app}\Releases\{#ReleaseName}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -56,6 +54,8 @@ Name: "{app}\Releases\{#ReleaseName}\Documents"
 Name: "{app}\Releases\{#ReleaseName}\Documents\reports"
 Name: "{app}\Releases\{#ReleaseName}\Documents\certificates"
 Name: "{app}\Releases\{#ReleaseName}\Documents\service-requests"
+Name: "{app}\Releases\{#ReleaseName}\Documents\inspection-reports"
+Name: "{app}\Releases\{#ReleaseName}\Documents\inspection-attachments"
 Name: "{app}\Releases\{#ReleaseName}\Backups"
 Name: "{app}\Releases\{#ReleaseName}\Logs"
 
@@ -79,6 +79,7 @@ Filename: "{app}\FleetSafetyManagerLauncher.exe"; WorkingDir: "{app}"; Descripti
 Filename: "{cmd}"; Parameters: "/C sc stop {#ServiceName}"; Flags: runhidden waituntilterminated; RunOnceId: "StopService"
 Filename: "{cmd}"; Parameters: "/C sc delete {#ServiceName}"; Flags: runhidden waituntilterminated; RunOnceId: "DeleteService"
 Filename: "{cmd}"; Parameters: "/C netsh advfirewall firewall delete rule name=""Fleet Safety Manager Office Synchronization"""; Flags: runhidden waituntilterminated; RunOnceId: "DeleteSyncFirewallRule"
+Filename: "{cmd}"; Parameters: "/C netsh advfirewall firewall delete rule name=""Fleet Safety Manager Office Discovery"""; Flags: runhidden waituntilterminated; RunOnceId: "DeleteDiscoveryFirewallRule"
 
 [Code]
 function ServiceExists(const ServiceName: string): Boolean;
@@ -121,6 +122,10 @@ begin
     UpdatedConfigText := String(ConfigText);
     StringChangeEx(UpdatedConfigText, '"Edition": "Office"', '"Edition": "{#MyEdition}"', True);
     StringChangeEx(UpdatedConfigText, '"Edition": "Ship"', '"Edition": "{#MyEdition}"', True);
+    { The packaged service listens on private-network HTTP; this internal flag is
+      configured by the installer and is never exposed to ordinary users. }
+    StringChangeEx(UpdatedConfigText, '"AllowInsecureHttp": false',
+      '"AllowInsecureHttp": true', True);
     if (Pos('"Edition": "{#MyEdition}"', UpdatedConfigText) = 0) or
        (not SaveStringToFile(ConfigPath, AnsiString(UpdatedConfigText), False)) then
       RaiseException('Could not configure the RC20 {#MyEdition} release.');
@@ -249,8 +254,7 @@ var
   BinPath: string;
   CommandLine: string;
 begin
-  if (CompareText('{#MyEdition}', 'Office') = 0) and
-     WizardIsTaskSelected('officesyncfirewall') then
+  if CompareText('{#MyEdition}', 'Office') = 0 then
     BinPath := '"' + ReleasePath + '\FSM.Api.exe" --urls http://0.0.0.0:8080'
   else
     BinPath := '"' + ReleasePath + '\FSM.Api.exe" --urls http://127.0.0.1:8080';
@@ -283,12 +287,20 @@ begin
   Exec(ExpandConstant('{cmd}'),
     '/C netsh advfirewall firewall delete rule name="Fleet Safety Manager Office Synchronization"',
     '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-  if (CompareText('{#MyEdition}', 'Office') = 0) and
-     WizardIsTaskSelected('officesyncfirewall') then
+  Exec(ExpandConstant('{cmd}'),
+    '/C netsh advfirewall firewall delete rule name="Fleet Safety Manager Office Discovery"',
+    '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  if CompareText('{#MyEdition}', 'Office') = 0 then
+  begin
     if not Exec(ExpandConstant('{cmd}'),
       '/C netsh advfirewall firewall add rule name="Fleet Safety Manager Office Synchronization" dir=in action=allow protocol=TCP localport=8080 profile=private',
       '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
       RaiseException('Could not configure the Office synchronization firewall rule.');
+    if not Exec(ExpandConstant('{cmd}'),
+      '/C netsh advfirewall firewall add rule name="Fleet Safety Manager Office Discovery" dir=in action=allow protocol=UDP localport=50820 profile=private',
+      '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode <> 0) then
+      RaiseException('Could not configure automatic Office discovery.');
+  end;
 end;
 
 procedure RemoveReleasePattern(const Pattern, ActiveReleasePath: string);

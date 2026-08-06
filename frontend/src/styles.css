@@ -725,6 +725,102 @@ button:disabled {
   background: white;
 }
 
+.activation-card {
+  width: min(460px, calc(100vw - 2rem));
+}
+
+.activation-card select {
+  width: 100%;
+}
+
+.activation-code-panel {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1rem 0;
+  padding: 1rem;
+  border: 1px solid #cbd5e1;
+  border-radius: 0.75rem;
+  background: #f8fafc;
+}
+
+.activation-code-panel code {
+  display: block;
+  font-size: 1.35rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.success-message {
+  padding: 0.85rem 1rem;
+  border: 1px solid #86efac;
+  border-radius: 0.5rem;
+  color: #166534;
+  background: #f0fdf4;
+}
+
+.simplified-synchronization {
+  max-width: 760px;
+}
+
+.simple-sync-status {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.simple-sync-status > div {
+  display: grid;
+  gap: 0.3rem;
+  min-height: 88px;
+  padding: 1rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.65rem;
+}
+
+.simple-sync-status span,
+.simple-sync-status small {
+  color: #64748b;
+}
+
+.manual-sync-window {
+  margin: 1rem 0;
+  padding: 1rem;
+  text-align: center;
+  border-radius: 0.65rem;
+  background: #f8fafc;
+}
+
+.indeterminate-progress {
+  overflow: hidden;
+  height: 0.65rem;
+  margin: 0.75rem 0;
+  border-radius: 999px;
+  background: #e2e8f0;
+}
+
+.indeterminate-progress span {
+  display: block;
+  width: 45%;
+  height: 100%;
+  border-radius: inherit;
+  background: #2563eb;
+  animation: sync-progress 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes sync-progress {
+  from { transform: translateX(-10%); }
+  to { transform: translateX(135%); }
+}
+
+.offline-message {
+  color: #a16207;
+}
+
+@media (max-width: 640px) {
+  .simple-sync-status { grid-template-columns: 1fr; }
+}
+
 .synchronization-dialog > .error {
   margin-top: 16px;
 }

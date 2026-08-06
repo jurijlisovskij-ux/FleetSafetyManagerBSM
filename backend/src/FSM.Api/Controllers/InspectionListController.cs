@@ -201,7 +201,23 @@ public sealed class InspectionListController(
         var query = db.InspectionReports.AsNoTracking().Where(x => x.VesselId == vesselId).Include(x => x.Items).ThenInclude(x => x.Equipment).AsQueryable();
         if (date is not null) query = query.Where(x => x.InspectionDate == date); if (!string.IsNullOrWhiteSpace(reportNumber)) query = query.Where(x => x.ReportNumber.Contains(reportNumber));
         if (!string.IsNullOrWhiteSpace(category)) query = query.Where(x => x.Items.Any(i => i.Equipment!.Category.ToString() == category));
-        return Ok(await query.OrderByDescending(x => x.InspectionDate).Select(x => new { x.Id, x.ReportNumber, x.InspectionDate, x.Inspector, x.PdfSha256, categories = x.Items.Select(i => i.Equipment!.Category).Distinct(), defects = x.Items.Count(i => i.Result == "Defect" && i.ClosureDate == null) }).ToListAsync(ct));
+        var reports = await query.OrderByDescending(x => x.InspectionDate)
+            .ToListAsync(ct);
+        return Ok(reports.Select(x => new
+        {
+            x.Id,
+            x.ReportNumber,
+            x.InspectionDate,
+            x.Inspector,
+            x.PdfSha256,
+            categories = x.Items
+                .Where(i => i.Equipment is not null)
+                .Select(i => i.Equipment!.Category)
+                .Distinct()
+                .ToList(),
+            defects = x.Items.Count(i =>
+                i.Result == "Defect" && i.ClosureDate == null)
+        }).ToList());
     }
 
     [HttpGet("reports/{reportId:guid}/pdf")]
