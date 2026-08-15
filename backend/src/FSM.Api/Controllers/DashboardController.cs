@@ -1,41 +1,38 @@
-using System.Security.Claims;
+using FSM.Api.Authorization;
+using FSM.Api.Synchronization;
 using FSM.Domain.Enums;
 using FSM.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Security.Claims;
 
 namespace FSM.Api.Controllers;
 
 [ApiController]
 [Authorize]
 [Route("api/dashboard")]
-public sealed class DashboardController(FsmDbContext db) : ControllerBase
+public sealed class DashboardController(
+    FsmDbContext db,
+    SynchronizationStatusService synchronizationStatuses,
+    VesselAccessService vesselAccess) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> Get(CancellationToken cancellationToken)
     {
-        var userIdText = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        var role = User.FindFirstValue(ClaimTypes.Role);
-
-        if (!Guid.TryParse(userIdText, out var userId))
+        var vessels = await vesselAccess.GetAccessibleVesselsAsync(
+            User,
+            cancellationToken);
+        if (vessels is null)
             return Unauthorized();
 
-        var vesselQuery = db.Vessels.AsNoTracking();
+        var vesselIds = vessels
+            .Select(x => x.Id)
+            .ToList();
 
-        if (!string.Equals(role, "OfficeAdmin", StringComparison.Ordinal))
-        {
-            vesselQuery = vesselQuery.Where(vessel =>
-                db.UserVessels.Any(assignment =>
-                    assignment.UserId == userId &&
-                    assignment.VesselId == vessel.Id));
-        }
-
-        var vessels = await vesselQuery
-            .OrderBy(x => x.VesselName)
-            .ToListAsync(cancellationToken);
-
-        var vesselIds = vessels.Select(x => x.Id).ToList();
+        var synchronization = await synchronizationStatuses.GetAsync(
+            vessels,
+            cancellationToken);
         var equipment = await db.Equipment.AsNoTracking()
             .Where(x => vesselIds.Contains(x.VesselId))
             .ToListAsync(cancellationToken);
@@ -93,6 +90,54 @@ public sealed class DashboardController(FsmDbContext db) : ControllerBase
             })
             .ToList();
 
+        var technicalSuperintendents = new List<object>();
+        if (string.Equals(
+            User.FindFirstValue(ClaimTypes.Role),
+            UserRole.OfficeAdmin.ToString(),
+            StringComparison.OrdinalIgnoreCase))
+        {
+            var superintendents = await db.Users.AsNoTracking()
+                .Where(x => x.Role == UserRole.Superintendent)
+                .OrderBy(x => x.FullName)
+                .ThenBy(x => x.Username)
+                .Select(x => new
+                {
+                    x.Id,
+                    x.FullName,
+                    VesselIds = x.VesselAssignments
+                        .Select(a => a.VesselId)
+                        .ToList()
+                })
+                .ToListAsync(cancellationToken);
+
+            foreach (var superintendent in superintendents)
+            {
+                var assignedIds = superintendent.VesselIds.ToHashSet();
+                var assignedStatuses = statuses
+                    .Where(x => assignedIds.Contains(x.Item.VesselId))
+                    .ToList();
+                technicalSuperintendents.Add(new
+                {
+                    superintendent.Id,
+                    superintendent.FullName,
+                    VesselCount = assignedIds.Count,
+                    Soon = assignedStatuses.Count(x =>
+                        x.Status == EquipmentStatus.Soon),
+                    Overdue = assignedStatuses.Count(x =>
+                        x.Status == EquipmentStatus.Overdue),
+                    Vessels = vessels
+                        .Where(x => assignedIds.Contains(x.Id))
+                        .Select(x => new
+                        {
+                            x.Id,
+                            x.VesselName,
+                            x.ImoNumber
+                        })
+                        .ToList()
+                });
+            }
+        }
+
         return Ok(new
         {
             Vessels = vessels.Count,
@@ -101,7 +146,9 @@ public sealed class DashboardController(FsmDbContext db) : ControllerBase
             Soon = statuses.Count(x => x.Status == EquipmentStatus.Soon),
             Overdue = statuses.Count(x => x.Status == EquipmentStatus.Overdue),
             VesselRows = vesselRows,
-            Upcoming = upcoming
+            Upcoming = upcoming,
+            TechnicalSuperintendents = technicalSuperintendents,
+            Synchronization = synchronization
         });
     }
 }

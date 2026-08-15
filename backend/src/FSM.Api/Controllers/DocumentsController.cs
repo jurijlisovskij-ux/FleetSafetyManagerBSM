@@ -1,4 +1,4 @@
-using System.Security.Claims;
+using FSM.Api.Authorization;
 using FSM.Api.Services;
 using FSM.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
@@ -12,7 +12,8 @@ namespace FSM.Api.Controllers;
 [Route("api/equipment/{equipmentId:guid}/documents")]
 public sealed class DocumentsController(
     FsmDbContext db,
-    DocumentStorageService storage) : ControllerBase
+    DocumentStorageService storage,
+    VesselAccessService vesselAccess) : ControllerBase
 {
     [HttpPost("{type:regex(^(report|certificate)$)}")]
     [RequestSizeLimit(26L * 1024L * 1024L)]
@@ -31,7 +32,8 @@ public sealed class DocumentsController(
         if (equipment?.Vessel is null)
             return NotFound();
 
-        if (!await CanAccessVesselAsync(
+        if (!await vesselAccess.CanAccessVesselAsync(
+            User,
             equipment.VesselId,
             cancellationToken))
         {
@@ -111,7 +113,8 @@ public sealed class DocumentsController(
         if (equipment is null)
             return NotFound();
 
-        if (!await CanAccessVesselAsync(
+        if (!await vesselAccess.CanAccessVesselAsync(
+            User,
             equipment.VesselId,
             cancellationToken))
         {
@@ -155,7 +158,8 @@ public sealed class DocumentsController(
         if (equipment is null)
             return NotFound();
 
-        if (!await CanAccessVesselAsync(
+        if (!await vesselAccess.CanAccessVesselAsync(
+            User,
             equipment.VesselId,
             cancellationToken))
         {
@@ -183,31 +187,4 @@ public sealed class DocumentsController(
         return NoContent();
     }
 
-    private async Task<bool> CanAccessVesselAsync(
-        Guid vesselId,
-        CancellationToken cancellationToken)
-    {
-        var role = User.FindFirstValue(ClaimTypes.Role);
-
-        if (string.Equals(
-            role,
-            "OfficeAdmin",
-            StringComparison.Ordinal))
-        {
-            return true;
-        }
-
-        var userIdText =
-            User.FindFirstValue(ClaimTypes.NameIdentifier);
-
-        if (!Guid.TryParse(userIdText, out var userId))
-            return false;
-
-        return await db.UserVessels
-            .AsNoTracking()
-            .AnyAsync(
-                x => x.UserId == userId &&
-                     x.VesselId == vesselId,
-                cancellationToken);
-    }
 }

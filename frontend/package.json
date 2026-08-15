@@ -1,8 +1,11 @@
 {
   "name": "fsm-clean-v01",
   "private": true,
-  "version": "0.14.0",
+  "version": "0.20.0",
   "type": "module",
+  "allowScripts": {
+    "esbuild": true
+  },
   "scripts": {
     "dev": "vite --host 0.0.0.0",
     "build": "tsc -b && vite build"

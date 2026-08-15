@@ -9,6 +9,24 @@ namespace FSM.Api.Services;
 
 public sealed class InspectionListService
 {
+    public byte[] GenerateCompletedPdf(Vessel vessel, string reportNumber,
+        DateOnly inspectionDate, string inspector,
+        IReadOnlyList<(Equipment Equipment, string Result, string? Remarks)> rows)
+    {
+        QuestPDF.Settings.License = LicenseType.Community;
+        return Document.Create(document => document.Page(page =>
+        {
+            page.Size(PageSizes.A4.Landscape()); page.Margin(24);
+            page.Header().Column(column => { column.Item().AlignCenter().Text("LSA / FFE INSPECTION REPORT").Bold().FontSize(15); column.Item().Text($"Vessel: {vessel.VesselName}    IMO: {vessel.ImoNumber}    Report: {reportNumber}    Date: {inspectionDate:dd MMM yyyy}    Inspector: {inspector}"); });
+            page.Content().PaddingTop(12).Table(table =>
+            {
+                table.ColumnsDefinition(c => { c.ConstantColumn(75); c.RelativeColumn(2); c.RelativeColumn(1); c.RelativeColumn(2); c.RelativeColumn(1); c.RelativeColumn(2); });
+                table.Header(h => { HeaderCell(h, "Category"); HeaderCell(h, "Equipment"); HeaderCell(h, "Serial No."); HeaderCell(h, "Identification"); HeaderCell(h, "Result"); HeaderCell(h, "Remarks"); });
+                foreach (var row in rows) { BodyCell(table, FormatCategory(row.Equipment.Category)); BodyCell(table, row.Equipment.EquipmentName); BodyCell(table, row.Equipment.SerialNumber ?? ""); BodyCell(table, string.Join(" / ", new[] { row.Equipment.Maker, row.Equipment.Model }.Where(x => !string.IsNullOrWhiteSpace(x)))); BodyCell(table, row.Result); BodyCell(table, row.Remarks ?? ""); }
+            });
+            page.Footer().AlignCenter().Text(t => { t.Span("Page "); t.CurrentPageNumber(); t.Span(" of "); t.TotalPages(); });
+        })).GeneratePdf();
+    }
     public byte[] GenerateExcel(
         Vessel vessel,
         IReadOnlyList<Equipment> equipment)

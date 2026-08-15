@@ -8,18 +8,24 @@ const apiBaseUrl =
 type LoginResult = {
   token: string;
   userId: string;
+  username: string;
   fullName: string;
-  email: string;
+  email?: string;
   role: "OfficeAdmin" | "Superintendent" | "Crew";
+  edition: "Office" | "Ship";
+  forcePasswordChange: boolean;
 };
 
 
 type ManagedUser = {
   id: string;
   fullName: string;
-  email: string;
+  username: string;
+  email?: string;
   role: LoginResult["role"];
   isActive: boolean;
+  isLocked: boolean;
+  forcePasswordChange: boolean;
   vesselIds: string[];
 };
 
@@ -32,6 +38,7 @@ type Vessel = {
   invoicingDetails?: string;
   accountingEmail?: string;
   displayName: string;
+  activationCode?: string;
 };
 
 type EquipmentCategory =
@@ -53,6 +60,7 @@ type Equipment = {
   quantity: number;
   inspectionBy: InspectionBy;
   expiryDate?: string;
+  responsible?: string;
   status: "OK" | "Soon" | "Overdue";
   remarks?: string;
   reportAvailable: boolean;
@@ -93,6 +101,84 @@ type DashboardData = {
   overdue: number;
   vesselRows: DashboardVesselRow[];
   upcoming: DashboardUpcoming[];
+  technicalSuperintendents: DashboardTechnicalSuperintendent[];
+  synchronization: SynchronizationStatus[];
+};
+
+type DashboardTechnicalSuperintendent = {
+  id: string;
+  fullName: string;
+  vesselCount: number;
+  soon: number;
+  overdue: number;
+  vessels: Array<{
+    id: string;
+    vesselName: string;
+    imoNumber: string;
+  }>;
+};
+
+type MedicineItem = {
+  id: string; itemName: string; formStrength?: string;
+  requiredQuantity: number; actualQuantity: number; unit: string;
+  batchNumber?: string; expiryDate?: string; storageLocation?: string;
+  medicalCategory?: "A" | "B"; isDangerousGoods: boolean;
+  replacementRequired: boolean; remarks?: string; isActive: boolean;
+  isStandardTemplateItem: boolean;
+  status: "OK" | "Soon" | "Overdue / Expired" | "Missing" | "Inactive";
+};
+
+type SynchronizationStatus = {
+  vesselId: string;
+  vesselName: string;
+  imoNumber: string;
+  lastSynchronizationUtc?: string;
+  status: "Success" | "Warning" | "Failed";
+  pendingChanges: number;
+  automaticIntervalHours: 0 | 6 | 12 | 24;
+  currentStage: string;
+  configured: boolean;
+  remoteBaseUrl?: string;
+  lastError?: string;
+  enabled: boolean;
+  allowInsecureHttp: boolean;
+  nextAutomaticAttemptUtc?: string;
+  connectionState:
+    | "Connected"
+    | "WaitingForInternet"
+    | "Synchronizing"
+    | "Failed";
+  retryCount: number;
+};
+
+type ActivationState = {
+  edition: "Office" | "Ship";
+  requiresActivation: boolean;
+  vessel?: {
+    vesselId: string;
+    vesselName: string;
+    imoNumber: string;
+    lastSynchronizationUtc?: string;
+  };
+};
+
+type SynchronizationStatusResponse = {
+  edition: "Office" | "Ship";
+  applicationVersion: string;
+  vessels: SynchronizationStatus[];
+};
+
+type SynchronizationLog = {
+  id: string;
+  dateUtc: string;
+  vesselId: string;
+  vessel: string;
+  direction: string;
+  durationSeconds: number;
+  uploadedItems: number;
+  downloadedItems: number;
+  result: "Success" | "Warning" | "Failed";
+  errorMessage?: string;
 };
 
 const categories: Equipment["category"][] = [
@@ -121,6 +207,49 @@ function formatDate(value?: string) {
   }).format(new Date(`${value}T00:00:00`));
 }
 
+function isValidDateInput(value: string) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split("-").map(Number);
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year &&
+    parsed.getUTCMonth() === month - 1 &&
+    parsed.getUTCDate() === day;
+}
+
+function formatSynchronizationDateTime(value?: string) {
+  if (!value) return { date: "Never", time: "—" };
+  const parsed = new Date(value);
+  return {
+    date: new Intl.DateTimeFormat("en-GB", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    }).format(parsed),
+    time: new Intl.DateTimeFormat("en-GB", {
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    }).format(parsed),
+  };
+}
+
+function synchronizationStateLabel(item: SynchronizationStatus) {
+  return {
+    Connected: "Connected",
+    WaitingForInternet: "Waiting for Internet",
+    Synchronizing: "Synchronizing",
+    Failed: "Synchronization Failed",
+  }[item.connectionState];
+}
+
+function synchronizationStateClass(item: SynchronizationStatus) {
+  return item.connectionState === "Connected"
+    ? "success"
+    : item.connectionState === "Failed"
+      ? "failed"
+      : "warning";
+}
+
 function categoryToApi(category: Equipment["category"]) {
   return {
     LSA: 0,
@@ -134,14 +263,125 @@ function inspectionToApi(value: Equipment["inspectionBy"]) {
   return value === "Crew" ? 0 : 1;
 }
 
+function ShipActivationPage({
+  onActivated,
+}: {
+  onActivated: () => Promise<void>;
+}) {
+  const [vessels, setVessels] = useState<ActivationVesselItem[]>([]);
+  const [vesselId, setVesselId] = useState("");
+  const [activationCode, setActivationCode] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+
+  async function discover() {
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/synchronization/activation/vessels`,
+        { cache: "no-store" },
+      );
+      if (!response.ok) return;
+      const body: { vessels: ActivationVesselItem[] } = await response.json();
+      setVessels(body.vessels);
+      setVesselId(current => current || body.vessels[0]?.vesselId || "");
+    } catch {
+      // Automatic discovery continues while the application remains open.
+    }
+  }
+
+  useEffect(() => {
+    void discover();
+    const timer = window.setInterval(() => void discover(), 5000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  async function connect() {
+    if (!vesselId || !activationCode.trim()) return;
+    setBusy(true);
+    setError("");
+    setMessage("Synchronizing...");
+    try {
+      const response = await fetch(
+        `${apiBaseUrl}/synchronization/activation`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ vesselId, activationCode }),
+        },
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok && !body?.activated)
+        throw new Error(body?.message ?? "Activation failed.");
+      setMessage(body?.message ?? "Synchronization completed successfully.");
+      await new Promise(resolve => window.setTimeout(resolve, 1200));
+      await onActivated();
+    } catch (exception) {
+      setMessage("");
+      setError((exception as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="login-page activation-page">
+      <div className="card activation-card">
+        <h1>Welcome</h1>
+        {error && <div className="error">{error}</div>}
+        {message && <div className="success-message">{message}</div>}
+        {vessels.length === 0 && !error &&
+          <p className="offline-message">Waiting for Internet connection…</p>}
+        <label>
+          Select Vessel
+          <select value={vesselId} onChange={event => setVesselId(event.target.value)}>
+            {vessels.length === 0 && <option value="">Searching for vessels...</option>}
+            {vessels.map(vessel => (
+              <option key={vessel.vesselId} value={vessel.vesselId}>
+                {vessel.vesselName}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Activation Code
+          <input
+            value={activationCode}
+            placeholder="FSM-XXXX-XXXX-XXXX"
+            autoComplete="off"
+            onChange={event => setActivationCode(event.target.value)}
+          />
+        </label>
+        <button
+          className="primary"
+          disabled={busy || !vesselId || !activationCode.trim()}
+          onClick={connect}
+        >
+          {busy ? "Connecting..." : "Connect"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+type ActivationVesselItem = {
+  vesselId: string;
+  vesselName: string;
+  imoNumber: string;
+};
+
 function App() {
-  const [email, setEmail] = useState("superintendent@fsm.local");
+  const [activationState, setActivationState] =
+    useState<ActivationState | null>(null);
+  const [username, setUsername] = useState("superintendent@fsm.local");
   const [password, setPassword] = useState("Super123!");
   const [user, setUser] = useState<LoginResult | null>(null);
   const [vessels, setVessels] = useState<Vessel[]>([]);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
   const [dashboardFilter, setDashboardFilter] =
     useState<"All" | "OK" | "Soon" | "Overdue">("All");
+  const [selectedSuperintendentId, setSelectedSuperintendentId] =
+    useState<string | null>(null);
   const [currentVessel, setCurrentVessel] = useState<Vessel | null>(null);
   const [equipment, setEquipment] = useState<Equipment[]>([]);
   const [selected, setSelected] = useState<Equipment | null>(null);
@@ -155,34 +395,68 @@ function App() {
     useState(false);
   const [showVesselProfile, setShowVesselProfile] =
     useState(false);
+  const [showCreateVessel, setShowCreateVessel] =
+    useState(false);
   const [showUserAdministration, setShowUserAdministration] =
     useState(false);
   const [showCopyEquipment, setShowCopyEquipment] =
     useState(false);
+  const [showSynchronization, setShowSynchronization] =
+    useState(false);
+  const [showAdvancedDiagnostics, setShowAdvancedDiagnostics] =
+    useState(false);
+  const [showMedicine, setShowMedicine] = useState(false);
   const [collapsed, setCollapsed] =
     useState<Set<Equipment["category"]>>(new Set());
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [showRecovery, setShowRecovery] = useState(false);
+  const [recoveryFile, setRecoveryFile] = useState<File | null>(null);
+  const [newPassword, setNewPassword] = useState("");
+
+  async function refreshActivationState() {
+    const response = await fetch(
+      `${apiBaseUrl}/synchronization/activation/state`,
+      { cache: "no-store" },
+    );
+    if (!response.ok)
+      throw new Error("Unable to load application activation state.");
+    setActivationState(await response.json());
+  }
 
   useEffect(() => {
+    void refreshActivationState()
+      .catch(error => setError((error as Error).message));
+  }, []);
+
+  async function refreshFleetData() {
     if (!user) return;
-    Promise.all([
-      authFetch(`${apiBaseUrl}/vessels`, user.token),
-      authFetch(`${apiBaseUrl}/dashboard`, user.token),
-    ])
-      .then(async ([vesselsResponse, dashboardResponse]) => {
-        if (!vesselsResponse.ok)
-          throw new Error("Unable to load vessels.");
-        if (!dashboardResponse.ok)
-          throw new Error("Unable to load dashboard.");
 
-        const vesselItems: Vessel[] = await vesselsResponse.json();
-        const dashboardData: DashboardData =
-          await dashboardResponse.json();
+    const [vesselsResponse, dashboardResponse] = await Promise.all([
+      authFetch(`${apiBaseUrl}/vessels`, user.token, {
+        cache: "no-store",
+      }),
+      authFetch(`${apiBaseUrl}/dashboard`, user.token, {
+        cache: "no-store",
+      }),
+    ]);
 
-        setVessels(vesselItems);
-        setDashboard(dashboardData);
-      })
+    if (!vesselsResponse.ok)
+      throw new Error("Unable to load vessels.");
+    if (!dashboardResponse.ok)
+      throw new Error("Unable to load dashboard.");
+
+    const vesselItems: Vessel[] = await vesselsResponse.json();
+    const dashboardData: DashboardData =
+      await dashboardResponse.json();
+
+    setVessels(vesselItems);
+    setDashboard(dashboardData);
+
+  }
+
+  useEffect(() => {
+    void refreshFleetData()
       .catch(error => setError((error as Error).message));
   }, [user]);
 
@@ -217,6 +491,15 @@ function App() {
 
   const singleVesselDashboard =
     (dashboard?.vesselRows.length ?? 0) === 1;
+  const showUpcomingVesselColumn = user?.role === "OfficeAdmin";
+
+  if (!activationState) {
+    return <div className="login-page"><div className="card"><h1>Fleet Safety Manager</h1><p>Starting...</p>{error && <div className="error">{error}</div>}</div></div>;
+  }
+
+  if (activationState.requiresActivation) {
+    return <ShipActivationPage onActivated={refreshActivationState} />;
+  }
 
   if (!user) {
     return (
@@ -231,7 +514,7 @@ function App() {
               const response = await fetch(`${apiBaseUrl}/auth/login`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ email, password }),
+                body: JSON.stringify({ username, password }),
               });
 
               if (!response.ok) {
@@ -249,23 +532,54 @@ function App() {
         >
           <h1>Fleet Safety Manager</h1>
           {error && <div className="error">{error}</div>}
-          <label>Email<input value={email} onChange={e => setEmail(e.target.value)} /></label>
+          <label>Username<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" /></label>
           <label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} /></label>
           <button className="primary" disabled={busy}>
             {busy ? "Signing in..." : "Sign In"}
           </button>
+          <button type="button" onClick={() => setShowRecovery(value => !value)}>Forgot administrator password?</button>
+          {showRecovery && <>
+            <p>Local access and the active FSM-Recovery.fsmkey are required.</p>
+            <input type="file" accept=".fsmkey" onChange={event => setRecoveryFile(event.target.files?.[0] ?? null)} />
+            <input type="password" placeholder="New administrator password" value={newPassword} onChange={event => setNewPassword(event.target.value)} />
+            <button type="button" disabled={!recoveryFile || newPassword.length < 8} onClick={async () => {
+              const form = new FormData(); form.append("recoveryFile", recoveryFile!); form.append("newPassword", newPassword);
+              const response = await fetch(`${apiBaseUrl}/auth/emergency-recovery`, { method: "POST", body: form });
+              const body = await response.json().catch(() => null); setError(body?.message ?? "Recovery failed.");
+            }}>Emergency Recovery</button>
+          </>}
         </form>
       </div>
     );
   }
 
+  if (user.forcePasswordChange) {
+    return <div className="login-page"><form className="card" onSubmit={async event => {
+      event.preventDefault();
+      const response = await authFetch(`${apiBaseUrl}/auth/change-password`, user.token, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ currentPassword: password, newPassword }),
+      });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) { setError(body?.message ?? "Unable to change password."); return; }
+      setUser({ ...user, forcePasswordChange: false });
+      setPassword(newPassword);
+    }}><h1>Change temporary password</h1>{error && <div className="error">{error}</div>}
+      <label>New password<input type="password" value={newPassword} onChange={event => setNewPassword(event.target.value)} /></label>
+      <button className="primary" disabled={newPassword.length < 8}>Change Password</button>
+    </form></div>;
+  }
+
   return (
-    <div className="application">
+    <div className={`application ${user.edition === "Ship" ? "ship-edition" : "office-edition"}`}>
       <header className="topbar">
-        <div><strong>Fleet Safety Manager</strong><span>Version RC19</span></div>
+        <div><strong>Fleet Safety Manager</strong><span>Version RC20</span></div>
         <div className="session">
           <span>{user.fullName} · {user.role}</span>
-          {currentVessel &&
+          <button onClick={() => setShowSynchronization(true)}>
+            Settings
+          </button>
+          {currentVessel && user.edition !== "Ship" &&
             <button
               onClick={() => {
                 setCurrentVessel(null);
@@ -296,8 +610,11 @@ function App() {
             setShowInspectionList(false);
             setShowAddEquipment(false);
             setShowVesselProfile(false);
+            setShowCreateVessel(false);
             setShowUserAdministration(false);
             setShowCopyEquipment(false);
+            setShowSynchronization(false);
+            setShowAdvancedDiagnostics(false);
           }}>Sign Out</button>
         </div>
       </header>
@@ -309,6 +626,13 @@ function App() {
               <h1>Dashboard</h1>
               <p className="muted">Fleet equipment status.</p>
             </div>
+            {user.role === "OfficeAdmin" &&
+              <button
+                className="primary"
+                onClick={() => setShowCreateVessel(true)}
+              >
+                Add Vessel
+              </button>}
           </div>
 
           {error && <div className="error">{error}</div>}
@@ -384,6 +708,48 @@ function App() {
                 </div>}
           </section>
 
+          {user.role === "OfficeAdmin" ? (
+          <section className="dashboard-section">
+            <div className="dashboard-section-heading">
+              <h2>Technical Superintendents</h2>
+              <span className="muted">Select a Superintendent to view assigned vessels.</span>
+            </div>
+            <div className="dashboard-table-wrap">
+              <table className="dashboard-table technical-superintendents-table">
+                <thead><tr><th>Full Name</th><th>Assigned Vessels</th><th>Soon</th><th>Overdue</th></tr></thead>
+                <tbody>
+                  {(dashboard?.technicalSuperintendents ?? []).map(item => (
+                    <React.Fragment key={item.id}>
+                      <tr className={selectedSuperintendentId === item.id ? "selected-row" : ""}
+                        onClick={() => setSelectedSuperintendentId(current => current === item.id ? null : item.id)}>
+                        <td><strong>{item.fullName}</strong></td>
+                        <td>{item.vesselCount}</td>
+                        <td className="status-soon-text">{item.soon}</td>
+                        <td className="status-overdue-text">{item.overdue}</td>
+                      </tr>
+                      {selectedSuperintendentId === item.id &&
+                        <tr className="superintendent-vessels-row"><td colSpan={4}>
+                          {item.vessels.length === 0
+                            ? <span className="muted">No vessels assigned.</span>
+                            : <div className="superintendent-vessels">
+                                {item.vessels.map(assigned => (
+                                  <button key={assigned.id} onClick={() => {
+                                    const vessel = vessels.find(value => value.id === assigned.id);
+                                    if (vessel) setCurrentVessel(vessel);
+                                  }}>
+                                    <strong>{assigned.vesselName}</strong>
+                                    <small>IMO {assigned.imoNumber}</small>
+                                  </button>
+                                ))}
+                              </div>}
+                        </td></tr>}
+                    </React.Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+          ) : (
           <section className="dashboard-section">
             <div className="dashboard-section-heading">
               <h2>Upcoming Inspections</h2>
@@ -404,13 +770,12 @@ function App() {
               <table className="dashboard-table">
                 <thead>
                   <tr>
-                    {!singleVesselDashboard &&
+                    {showUpcomingVesselColumn &&
                       <th>Vessel</th>}
                     <th>Equipment</th>
                     <th>Category</th>
                     <th>Expiry Date</th>
-                    {!singleVesselDashboard &&
-                      <th>Days Left</th>}
+                    <th>Days Left</th>
                     <th>Status</th>
                   </tr>
                 </thead>
@@ -425,13 +790,12 @@ function App() {
                           if (vessel) setCurrentVessel(vessel);
                         }}
                       >
-                        {!singleVesselDashboard &&
+                        {showUpcomingVesselColumn &&
                           <td>{item.vesselName}</td>}
                         <td>{item.equipmentName}</td>
                         <td>{item.category}</td>
                         <td>{formatDate(item.expiryDate)}</td>
-                        {!singleVesselDashboard &&
-                          <td>{item.daysLeft}</td>}
+                        <td>{item.daysLeft}</td>
                         <td><span className={`status ${item.status.toLowerCase()}`}>{item.status}</span></td>
                       </tr>
                     ))}
@@ -439,6 +803,50 @@ function App() {
               </table>
             </div>
           </section>
+          )}
+
+          <section className="dashboard-section">
+              <div className="dashboard-section-heading">
+                <h2>Synchronization Status</h2>
+              </div>
+              <div className="dashboard-table-wrap">
+                <table className="dashboard-table synchronization-table">
+                  <thead>
+                    <tr>
+                      <th>Vessel</th>
+                      <th>Last Sync</th>
+                      <th>Pending Changes</th>
+                      <th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(dashboard?.synchronization ?? []).map(item => {
+                      const lastSync = formatSynchronizationDateTime(
+                        item.lastSynchronizationUtc,
+                      );
+                      return (
+                        <tr key={item.vesselId}>
+                          <td>
+                            <strong>{item.vesselName}</strong>
+                            <small>IMO {item.imoNumber}</small>
+                          </td>
+                          <td>
+                            {lastSync.date}
+                            <small>{lastSync.time}</small>
+                          </td>
+                          <td>{item.pendingChanges}</td>
+                          <td>
+                            <span className={`sync-state ${synchronizationStateClass(item)}`}>
+                              {synchronizationStateLabel(item)}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </section>
         </main>
       ) : (
         <main className="workspace">
@@ -470,16 +878,12 @@ function App() {
             <div className="workspace-actions">
               <span className="muted">Equipment Register</span>
               <button
-                type="button"
-                disabled
-                title="Synchronization is not configured in this build."
-              >
-                Synchronization
-              </button>
-              <button
                 onClick={() => setShowVesselProfile(true)}
               >
                 Vessel Profile
+              </button>
+              <button onClick={() => setShowMedicine(true)}>
+                Medicine Chest
               </button>
               {user.role === "OfficeAdmin" &&
                 <button onClick={() => setShowCopyEquipment(true)}>
@@ -497,6 +901,9 @@ function App() {
               >
                 Generate Inspection List
               </button>
+              <button onClick={() => setSelectedForRequest(new Set(equipment.filter(x => x.category === "LSA").map(x => x.id)))}>Select LSA</button>
+              <button onClick={() => setSelectedForRequest(new Set(equipment.filter(x => x.category === "FFE").map(x => x.id)))}>Select FFE</button>
+              <button disabled={selectedForRequest.size === 0} onClick={() => setSelectedForRequest(new Set())}>Clear selection</button>
               <button
                 className="primary"
                 disabled={selectedForRequest.size === 0}
@@ -609,6 +1016,8 @@ function App() {
                         current.map(item => item.id === saved.id ? saved : item),
                       );
                       setSelected(saved);
+                      void refreshFleetData()
+                        .catch(error => setError((error as Error).message));
                     }}
                     onDeleted={id => {
                       setEquipment(current => current.filter(item => item.id !== id));
@@ -650,6 +1059,12 @@ function App() {
 
 
 
+      {showMedicine && currentVessel &&
+        <MedicineDialog
+          token={user.token}
+          vessel={currentVessel}
+          onClose={() => setShowMedicine(false)}
+        />}
       {showCopyEquipment &&
         currentVessel &&
         user.role === "OfficeAdmin" &&
@@ -678,7 +1093,6 @@ function App() {
         user.role === "OfficeAdmin" &&
         <UserAdministrationDialog
           token={user.token}
-          vessels={vessels}
           onClose={() =>
             setShowUserAdministration(false)}
         />}
@@ -770,6 +1184,54 @@ function App() {
           }}
         />}
 
+      {showCreateVessel &&
+        user.role === "OfficeAdmin" &&
+        <CreateVesselDialog
+          token={user.token}
+          onClose={() => setShowCreateVessel(false)}
+          onCreated={async () => {
+            await refreshFleetData();
+          }}
+        />}
+
+      {showSynchronization &&
+        <SettingsSynchronizationDialog
+          token={user.token}
+          userRole={user.role}
+          initialVesselId={currentVessel?.id}
+          onClose={() => setShowSynchronization(false)}
+          onAdvancedDiagnostics={() => {
+            setShowSynchronization(false);
+            setShowAdvancedDiagnostics(true);
+          }}
+          onStatusChanged={items => {
+            setDashboard(current => current
+              ? { ...current, synchronization: items }
+              : current);
+          }}
+          onFleetChanged={() => {
+            void refreshFleetData()
+              .catch(error => setError((error as Error).message));
+          }}
+        />}
+
+      {showAdvancedDiagnostics && user.role === "OfficeAdmin" &&
+        <SynchronizationDialog
+          token={user.token}
+          userRole={user.role}
+          initialVesselId={currentVessel?.id}
+          onClose={() => setShowAdvancedDiagnostics(false)}
+          onStatusChanged={items => {
+            setDashboard(current => current
+              ? { ...current, synchronization: items }
+              : current);
+          }}
+          onFleetChanged={() => {
+            void refreshFleetData()
+              .catch(error => setError((error as Error).message));
+          }}
+        />}
+
     </div>
   );
 }
@@ -779,6 +1241,690 @@ function App() {
 
 
 
+
+function SettingsSynchronizationDialog({
+  token,
+  userRole,
+  initialVesselId,
+  onClose,
+  onAdvancedDiagnostics,
+  onStatusChanged,
+  onFleetChanged,
+}: {
+  token: string;
+  userRole: LoginResult["role"];
+  initialVesselId?: string;
+  onClose: () => void;
+  onAdvancedDiagnostics: () => void;
+  onStatusChanged: (items: SynchronizationStatus[]) => void;
+  onFleetChanged: () => void;
+}) {
+  const [response, setResponse] =
+    useState<SynchronizationStatusResponse | null>(null);
+  const [selectedVesselId, setSelectedVesselId] =
+    useState(initialVesselId ?? "");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const selected = response?.vessels.find(
+    item => item.vesselId === selectedVesselId,
+  );
+
+  async function load() {
+    const statusResponse = await authFetch(
+      `${apiBaseUrl}/synchronization/status`,
+      token,
+      { cache: "no-store" },
+    );
+    if (!statusResponse.ok)
+      throw new Error("Unable to load synchronization status.");
+    const body: SynchronizationStatusResponse = await statusResponse.json();
+    setResponse(body);
+    setSelectedVesselId(current =>
+      current || initialVesselId || body.vessels[0]?.vesselId || "");
+    onStatusChanged(body.vessels);
+    return body;
+  }
+
+  useEffect(() => {
+    void load().catch(exception => setError((exception as Error).message));
+  }, []);
+
+  async function synchronizeNow() {
+    if (!selectedVesselId) return;
+    setBusy(true);
+    setError("");
+    setMessage("");
+    try {
+      const runResponse = await authFetch(
+        `${apiBaseUrl}/synchronization/run/${selectedVesselId}`,
+        token,
+        { method: "POST" },
+      );
+      const body = await runResponse.json().catch(() => null);
+      if (!runResponse.ok)
+        throw new Error(body?.message ?? "Synchronization failed.");
+      setMessage("Synchronization completed successfully.");
+      await load();
+      onFleetChanged();
+    } catch (exception) {
+      const detail = (exception as Error).message;
+      setError(detail.toLowerCase().includes("connect") ||
+          detail.toLowerCase().includes("network")
+        ? "No Internet connection. Synchronization will continue automatically when the connection is restored."
+        : detail);
+      await load().catch(() => undefined);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const last = formatSynchronizationDateTime(
+    selected?.lastSynchronizationUtc,
+  );
+  const next = selected?.nextAutomaticAttemptUtc
+    ? new Date(selected.nextAutomaticAttemptUtc).toLocaleString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : "Automatically after connection";
+
+  return (
+    <div className="modal">
+      <div className="synchronization-dialog simplified-synchronization">
+        <div className="service-request-header">
+          <div><h2>Settings</h2><p>Synchronization</p></div>
+          <button type="button" onClick={onClose}>Close</button>
+        </div>
+        {error && <div className="error">{error}</div>}
+        {message && <div className="success-message">{message}</div>}
+        <div className="synchronization-vessel-tabs">
+          {(response?.vessels ?? []).map(item => (
+            <button key={item.vesselId}
+              className={item.vesselId === selectedVesselId ? "selected" : ""}
+              onClick={() => setSelectedVesselId(item.vesselId)}>
+              {item.vesselName}
+            </button>
+          ))}
+        </div>
+        {selected && <div className="simple-sync-status">
+          <div><span>Status</span><strong className={`sync-state ${synchronizationStateClass(selected)}`}>
+            {synchronizationStateLabel(selected)}
+          </strong></div>
+          <div><span>Last synchronization</span><strong>{last.date}</strong><small>{last.time}</small></div>
+          <div><span>Next synchronization</span><strong>{next}</strong></div>
+          <div><span>Pending changes</span><strong>{selected.pendingChanges}</strong></div>
+        </div>}
+        {busy && <div className="manual-sync-window" aria-live="polite">
+          <strong>Synchronizing...</strong>
+          <div className="indeterminate-progress"><span /></div>
+          <p>Please wait...</p>
+        </div>}
+        <div className="synchronization-actions">
+          {response?.edition === "Ship" &&
+            <button className="primary" disabled={busy || !selected}
+              onClick={synchronizeNow}>Synchronize Now</button>}
+          {userRole === "OfficeAdmin" &&
+            <button disabled={busy} onClick={onAdvancedDiagnostics}>
+              Advanced Diagnostics
+            </button>}
+        </div>
+        {selected?.connectionState === "WaitingForInternet" &&
+          <p className="offline-message">Waiting for Internet connection…</p>}
+      </div>
+    </div>
+  );
+}
+
+function SynchronizationDialog({
+  token,
+  userRole,
+  initialVesselId,
+  onClose,
+  onStatusChanged,
+  onFleetChanged,
+}: {
+  token: string;
+  userRole: LoginResult["role"];
+  initialVesselId?: string;
+  onClose: () => void;
+  onStatusChanged: (items: SynchronizationStatus[]) => void;
+  onFleetChanged: () => void;
+}) {
+  const [statusResponse, setStatusResponse] =
+    useState<SynchronizationStatusResponse | null>(null);
+  const [logs, setLogs] = useState<SynchronizationLog[]>([]);
+  const [advancedDetails, setAdvancedDetails] =
+    useState<Record<string, unknown> | null>(null);
+  const [selectedVesselId, setSelectedVesselId] =
+    useState(initialVesselId ?? "");
+  const [intervalHours, setIntervalHours] =
+    useState<0 | 6 | 12 | 24>(24);
+  const [remoteBaseUrl, setRemoteBaseUrl] = useState("");
+  const [enabled, setEnabled] = useState(false);
+  const [allowInsecureHttp, setAllowInsecureHttp] = useState(false);
+  const [configurationPassphrase, setConfigurationPassphrase] = useState("");
+  const [manualToken, setManualToken] = useState("");
+  const [phase, setPhase] = useState("");
+  const [generatedToken, setGeneratedToken] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const selected = statusResponse?.vessels.find(
+    item => item.vesselId === selectedVesselId,
+  );
+  const lastSync = formatSynchronizationDateTime(
+    selected?.lastSynchronizationUtc,
+  );
+  const phases = [
+    "Checking connection...",
+    "Uploading changes...",
+    "Downloading updates...",
+    "Synchronization completed.",
+  ];
+  const currentPhaseIndex = phases.indexOf(phase);
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  useEffect(() => {
+    if (!selected) return;
+    setIntervalHours(selected.automaticIntervalHours);
+    setRemoteBaseUrl(selected.remoteBaseUrl ?? "");
+    setEnabled(selected.enabled);
+    setAllowInsecureHttp(selected.allowInsecureHttp);
+  }, [selected?.vesselId]);
+
+  async function loadStatus(notify = true) {
+    const response = await authFetch(
+      `${apiBaseUrl}/synchronization/status`,
+      token,
+    );
+    if (!response.ok)
+      throw new Error("Unable to load synchronization status.");
+    const body: SynchronizationStatusResponse = await response.json();
+    setStatusResponse(body);
+    if (!selectedVesselId && body.vessels.length > 0)
+      setSelectedVesselId(initialVesselId ?? body.vessels[0].vesselId);
+    if (notify) onStatusChanged(body.vessels);
+    return body;
+  }
+
+  async function loadLogs() {
+    const response = await authFetch(
+      `${apiBaseUrl}/synchronization/logs`,
+      token,
+    );
+    if (!response.ok)
+      throw new Error("Unable to load the synchronization log.");
+    setLogs(await response.json());
+  }
+
+  async function loadAdvancedDetails() {
+    const response = await authFetch(
+      `${apiBaseUrl}/synchronization/advanced`,
+      token,
+    );
+    if (!response.ok)
+      throw new Error("Unable to load advanced diagnostics.");
+    setAdvancedDetails(await response.json());
+  }
+
+  async function refresh() {
+    setError("");
+    try {
+      await Promise.all([loadStatus(), loadLogs(), loadAdvancedDetails()]);
+    } catch (exception) {
+      setError((exception as Error).message);
+    }
+  }
+
+  async function runSynchronization() {
+    if (!selectedVesselId) return;
+    setBusy(true);
+    setError("");
+    setPhase("Checking connection...");
+    const poll = window.setInterval(async () => {
+      try {
+        const current = await loadStatus(false);
+        const vesselStatus = current.vessels.find(
+          item => item.vesselId === selectedVesselId,
+        );
+        if (vesselStatus?.currentStage)
+          setPhase(vesselStatus.currentStage);
+      } catch {
+        // The active request reports the final error.
+      }
+    }, 750);
+
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/synchronization/run/${selectedVesselId}`,
+        token,
+        { method: "POST" },
+      );
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.message ?? "Synchronization failed.");
+      }
+      setPhase("Synchronization completed.");
+      await refresh();
+      onFleetChanged();
+    } catch (exception) {
+      setPhase("Failed");
+      setError((exception as Error).message);
+      await loadStatus().catch(() => undefined);
+      await loadLogs().catch(() => undefined);
+    } finally {
+      window.clearInterval(poll);
+      setBusy(false);
+    }
+  }
+
+  async function saveSettings() {
+    if (!selectedVesselId) return;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/synchronization/settings/${selectedVesselId}`,
+        token,
+        {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            automaticIntervalHours: intervalHours,
+            remoteBaseUrl: remoteBaseUrl.trim() || null,
+            enabled,
+            allowInsecureHttp,
+          }),
+        },
+      );
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.message ?? "Unable to save synchronization settings.");
+      }
+      await loadStatus();
+    } catch (exception) {
+      setError((exception as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function testConnection() {
+    if (!selectedVesselId) return;
+    setBusy(true); setError(""); setPhase("Checking connection...");
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/synchronization/test/${selectedVesselId}`,
+        token,
+        { method: "POST" },
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.message ?? "Connection test failed.");
+      setPhase("Connection successful.");
+      await refresh();
+    } catch (exception) {
+      setPhase("Failed"); setError((exception as Error).message);
+    } finally { setBusy(false); }
+  }
+
+  async function exportConfiguration() {
+    if (!selectedVesselId) return;
+    setBusy(true); setError("");
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/synchronization/configuration/export/${selectedVesselId}`,
+        token,
+        { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ passphrase: configurationPassphrase }) },
+      );
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.message ?? "Unable to export Ship configuration.");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `FSM-Ship-Sync-${selected?.imoNumber ?? "vessel"}.json`;
+      link.click(); URL.revokeObjectURL(url);
+    } catch (exception) { setError((exception as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function exportDiagnostics() {
+    setBusy(true); setError("");
+    try {
+      const response = await authFetch(`${apiBaseUrl}/synchronization/diagnostics`, token);
+      if (!response.ok) throw new Error("Unable to export synchronization diagnostics.");
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url; link.download = `FSM-Sync-Diagnostics-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}.zip`;
+      link.click(); URL.revokeObjectURL(url);
+    } catch (exception) { setError((exception as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function copyConfigurationSummary() {
+    if (!selected) return;
+    const lines = [
+      `Office endpoint: ${remoteBaseUrl.trim()}`,
+      `Vessel ID: ${selected.vesselId}`,
+      `Vessel IMO: ${selected.imoNumber}`,
+      `Application version: ${statusResponse?.applicationVersion ?? "0.20.0-RC20"}`,
+      `Automatic interval: ${intervalHours === 0 ? "Manual only" : `${intervalHours} hours`}`,
+      generatedToken ? `One-time synchronization token: ${generatedToken}` : "Token: generate or rotate before provisioning",
+    ];
+    await navigator.clipboard.writeText(lines.join("\n"));
+  }
+
+  async function importConfiguration(file: File) {
+    setBusy(true); setError("");
+    try {
+      const protectedConfiguration = await file.text();
+      const response = await authFetch(
+        `${apiBaseUrl}/synchronization/configuration/import`, token,
+        { method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ protectedConfiguration, passphrase: configurationPassphrase }) },
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.message ?? "Unable to import Ship configuration.");
+      await refresh();
+    } catch (exception) { setError((exception as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function saveManualShipConfiguration() {
+    if (!selected) return;
+    setBusy(true); setError("");
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/synchronization/configuration/manual`, token,
+        { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({
+          vesselId: selected.vesselId, vesselImo: selected.imoNumber,
+          officeEndpointUrl: remoteBaseUrl.trim(), synchronizationToken: manualToken.trim(),
+          automaticIntervalHours: intervalHours, allowInsecureHttp,
+        }) },
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.message ?? "Unable to save Ship configuration.");
+      setManualToken(""); await refresh();
+    } catch (exception) { setError((exception as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function rotateToken() {
+    if (!selectedVesselId ||
+        !window.confirm("Generate a new vessel synchronization token? The previous token will stop working.")) {
+      return;
+    }
+    setBusy(true);
+    setError("");
+    setGeneratedToken("");
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/synchronization/token/${selectedVesselId}`,
+        token,
+        { method: "POST" },
+      );
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.message ?? "Unable to generate the vessel token.");
+      }
+      const body = await response.json();
+      setGeneratedToken(body.token);
+      await loadStatus();
+    } catch (exception) {
+      setError((exception as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const canRun = Boolean(
+    selected?.configured &&
+    (statusResponse?.edition === "Ship" || selected?.remoteBaseUrl),
+  );
+
+  return (
+    <div className="modal">
+      <div className="synchronization-dialog">
+        <div className="service-request-header">
+          <div>
+            <h2>Advanced Diagnostics</h2>
+            <p>
+              {statusResponse?.edition ?? "—"} Edition · {statusResponse?.applicationVersion ?? "RC20"}
+            </p>
+          </div>
+          <button type="button" onClick={onClose}>Close</button>
+        </div>
+
+        {error && <div className="error">{error}</div>}
+
+        {advancedDetails && <details className="synchronization-log" open>
+          <summary>Endpoint, token, queues, retries and health checks</summary>
+          <pre>{JSON.stringify(advancedDetails, null, 2)}</pre>
+        </details>}
+
+        <div className="synchronization-vessel-tabs">
+          {(statusResponse?.vessels ?? []).map(item => (
+            <button
+              key={item.vesselId}
+              className={item.vesselId === selectedVesselId ? "selected" : ""}
+              onClick={() => setSelectedVesselId(item.vesselId)}
+            >
+              {item.vesselName}
+            </button>
+          ))}
+        </div>
+
+        {selected && <>
+          <div className="synchronization-summary">
+            <div>
+              <span>Last synchronization:</span>
+              <strong>{lastSync.date}</strong>
+              <small>{lastSync.time}</small>
+            </div>
+            <div>
+              <span>Status:</span>
+              <strong className={`sync-state ${selected.status.toLowerCase()}`}>
+                {selected.status}
+              </strong>
+              {selected.lastError && <small>{selected.lastError}</small>}
+            </div>
+            <div>
+              <span>Pending changes:</span>
+              <strong>{selected.pendingChanges}</strong>
+              <small>{selected.configured ? "Connection configured" : "Configuration required"}</small>
+            </div>
+          </div>
+
+          <div className="synchronization-progress" aria-live="polite">
+            {phases.map((item, index) => (
+              <div
+                key={item}
+                className={
+                  item === phase
+                    ? "active"
+                    : currentPhaseIndex > index
+                      ? "complete"
+                      : ""
+                }
+              >
+                <span>{currentPhaseIndex > index ? "✓" : index + 1}</span>
+                {item}
+              </div>
+            ))}
+            {phase === "Failed" &&
+              <div className="failed"><span>!</span>Synchronization failed.</div>}
+          </div>
+
+          <div className="synchronization-actions">
+            <button
+              className="primary"
+              disabled={busy || !canRun}
+              title={!canRun ? "Configure an HTTPS endpoint and vessel token first." : ""}
+              onClick={runSynchronization}
+            >
+              {busy ? "Synchronizing..." : "Synchronize"}
+            </button>
+            <button disabled={busy} onClick={refresh}>Refresh</button>
+            {statusResponse?.edition === "Ship" &&
+              <button disabled={busy || !selected.configured} onClick={testConnection}>
+                Test Connection
+              </button>}
+          </div>
+
+          {userRole === "OfficeAdmin" && statusResponse?.edition === "Office" &&
+            <section className="synchronization-settings">
+              <h3>Office Synchronization Provisioning</h3>
+              <label className="checkbox-label">
+                <input type="checkbox" checked={enabled}
+                  onChange={event => setEnabled(event.target.checked)} />
+                Enable synchronization for {selected.vesselName}
+              </label>
+              <label>
+                Automatic synchronization
+                <select
+                  value={intervalHours}
+                  onChange={event => setIntervalHours(
+                    Number(event.target.value) as 0 | 6 | 12 | 24,
+                  )}
+                >
+                  <option value={6}>Every 6 hours</option>
+                  <option value={12}>Every 12 hours</option>
+                  <option value={24}>Every 24 hours</option>
+                  <option value={0}>Manual only</option>
+                </select>
+              </label>
+              <label>
+                Effective Office synchronization URL
+                <input
+                  type="url"
+                  placeholder="https://office.example.com:8443"
+                  value={remoteBaseUrl}
+                  onChange={event => setRemoteBaseUrl(event.target.value)}
+                />
+              </label>
+              <label className="checkbox-label">
+                <input type="checkbox" checked={allowInsecureHttp}
+                  onChange={event => setAllowInsecureHttp(event.target.checked)} />
+                Allow HTTP for explicitly approved local-network testing
+              </label>
+              <div className="synchronization-actions">
+                <button disabled={busy} onClick={saveSettings}>Save Settings</button>
+                <button disabled={busy} onClick={rotateToken}>Generate Vessel Token</button>
+                <button disabled={busy || !remoteBaseUrl.trim()} onClick={copyConfigurationSummary}>Copy Configuration</button>
+              </div>
+              {generatedToken &&
+                <div className="generated-token">
+                  <strong>New vessel token — copy it now:</strong>
+                  <code>{generatedToken}</code>
+                  <button onClick={() => navigator.clipboard.writeText(generatedToken)}>
+                    Copy
+                  </button>
+                </div>}
+              <label>
+                Configuration file passphrase (minimum 12 characters)
+                <input type="password" value={configurationPassphrase}
+                  onChange={event => setConfigurationPassphrase(event.target.value)} />
+              </label>
+              <button disabled={busy || configurationPassphrase.length < 12}
+                onClick={exportConfiguration}>Export Protected Ship Configuration</button>
+              <button disabled={busy} onClick={exportDiagnostics}>Export Support Diagnostics</button>
+            </section>}
+
+          {statusResponse?.edition === "Ship" &&
+            <section className="synchronization-settings">
+              <h3>Ship Synchronization Setup</h3>
+              <p>Configured vessel: <strong>{selected.vesselName}</strong> · IMO {selected.imoNumber}</p>
+              <label>
+                Configuration file passphrase
+                <input type="password" value={configurationPassphrase}
+                  onChange={event => setConfigurationPassphrase(event.target.value)} />
+              </label>
+              <label>
+                Import Office-generated configuration
+                <input type="file" accept="application/json,.json" disabled={busy}
+                  onChange={event => {
+                    const file = event.target.files?.[0];
+                    if (file) void importConfiguration(file);
+                  }} />
+              </label>
+              <label>
+                Office synchronization URL
+                <input type="url" value={remoteBaseUrl}
+                  onChange={event => setRemoteBaseUrl(event.target.value)} />
+              </label>
+              <label>
+                Vessel synchronization token
+                <input type="password" value={manualToken}
+                  onChange={event => setManualToken(event.target.value)} />
+              </label>
+              <label className="checkbox-label">
+                <input type="checkbox" checked={allowInsecureHttp}
+                  onChange={event => setAllowInsecureHttp(event.target.checked)} />
+                Allow HTTP for explicitly approved local-network testing
+              </label>
+              <label>
+                Automatic synchronization
+                <select value={intervalHours}
+                  onChange={event => setIntervalHours(Number(event.target.value) as 0 | 6 | 12 | 24)}>
+                  <option value={6}>Every 6 hours</option><option value={12}>Every 12 hours</option>
+                  <option value={24}>Every 24 hours</option><option value={0}>Manual only</option>
+                </select>
+              </label>
+              <button disabled={busy || !manualToken.trim() || !remoteBaseUrl.trim()}
+                onClick={saveManualShipConfiguration}>Save Manual Configuration</button>
+              {selected.nextAutomaticAttemptUtc &&
+                <p>Next automatic attempt: {new Date(selected.nextAutomaticAttemptUtc).toLocaleString("en-GB")}</p>}
+            </section>}
+        </>}
+
+        <section className="synchronization-log">
+          <h3>Synchronization Log</h3>
+          <div className="dashboard-table-wrap">
+            <table className="dashboard-table synchronization-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Vessel</th>
+                  <th>Direction</th>
+                  <th>Duration</th>
+                  <th>Uploaded</th>
+                  <th>Downloaded</th>
+                  <th>Result</th>
+                  <th>Error message</th>
+                </tr>
+              </thead>
+              <tbody>
+                {logs.map(log => (
+                  <tr key={log.id}>
+                    <td>{new Date(log.dateUtc).toLocaleString("en-GB")}</td>
+                    <td>{log.vessel}</td>
+                    <td>{log.direction}</td>
+                    <td>{log.durationSeconds}s</td>
+                    <td>{log.uploadedItems}</td>
+                    <td>{log.downloadedItems}</td>
+                    <td><span className={`sync-state ${log.result.toLowerCase()}`}>{log.result}</span></td>
+                    <td>{log.errorMessage ?? "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {logs.length === 0 &&
+            <div className="empty-state">No synchronization attempts recorded.</div>}
+        </section>
+      </div>
+    </div>
+  );
+}
 
 type CopyMode = "AddOnlyNew" | "ReplaceExisting";
 
@@ -979,16 +2125,15 @@ function CopyEquipmentDialog({
 
 function UserAdministrationDialog({
   token,
-  vessels,
   onClose,
 }: {
   token: string;
-  vessels: Vessel[];
   onClose: () => void;
 }) {
   const emptyDraft = {
     id: "",
     fullName: "",
+    username: "",
     email: "",
     role: "Crew" as LoginResult["role"],
     isActive: true,
@@ -997,28 +2142,43 @@ function UserAdministrationDialog({
   };
 
   const [users, setUsers] = useState<ManagedUser[]>([]);
+  const [vessels, setVessels] = useState<Vessel[]>([]);
   const [draft, setDraft] = useState(emptyDraft);
   const [administrationBusy, setAdministrationBusy] =
     useState(false);
   const [administrationError, setAdministrationError] =
     useState("");
+  const [temporaryPassword, setTemporaryPassword] = useState(true);
 
   const isNew = !draft.id;
 
-  async function loadUsers() {
+  async function loadAdministrationData() {
     setAdministrationBusy(true);
     setAdministrationError("");
 
     try {
-      const response = await authFetch(
-        `${apiBaseUrl}/users`,
-        token,
-      );
+      const [usersResponse, vesselsResponse] = await Promise.all([
+        authFetch(`${apiBaseUrl}/users`, token, {
+          cache: "no-store",
+        }),
+        authFetch(`${apiBaseUrl}/vessels`, token, {
+          cache: "no-store",
+        }),
+      ]);
 
-      if (!response.ok)
+      if (!usersResponse.ok)
         throw new Error("Unable to load users.");
+      if (!vesselsResponse.ok)
+        throw new Error("Unable to load vessels.");
 
-      setUsers(await response.json());
+      const [userItems, vesselItems]: [ManagedUser[], Vessel[]] =
+        await Promise.all([
+          usersResponse.json(),
+          vesselsResponse.json(),
+        ]);
+
+      setUsers(userItems);
+      setVessels(vesselItems);
     } catch (exception) {
       setAdministrationError(
         (exception as Error).message,
@@ -1029,14 +2189,15 @@ function UserAdministrationDialog({
   }
 
   useEffect(() => {
-    loadUsers();
+    void loadAdministrationData();
   }, []);
 
   function selectUser(item: ManagedUser) {
     setDraft({
       id: item.id,
       fullName: item.fullName,
-      email: item.email,
+      username: item.username,
+      email: item.email ?? "",
       role: item.role,
       isActive: item.isActive,
       password: "",
@@ -1058,9 +2219,9 @@ function UserAdministrationDialog({
       return;
     }
 
-    if (!draft.email.trim()) {
+    if (!draft.username.trim()) {
       setAdministrationError(
-        "Email is required.",
+        "Username is required.",
       );
       return;
     }
@@ -1088,7 +2249,8 @@ function UserAdministrationDialog({
           },
           body: JSON.stringify({
             fullName: draft.fullName.trim(),
-            email: draft.email.trim(),
+            username: draft.username.trim(),
+            email: draft.email.trim() || null,
             role:
               draft.role === "OfficeAdmin"
                 ? 0
@@ -1096,8 +2258,8 @@ function UserAdministrationDialog({
                   ? 1
                   : 2,
             isActive: draft.isActive,
-            password:
-              draft.password || null,
+            password: isNew ? draft.password : null,
+            forcePasswordChange: isNew && temporaryPassword,
             vesselIds:
               draft.role === "OfficeAdmin"
                 ? []
@@ -1139,6 +2301,29 @@ function UserAdministrationDialog({
     }
   }
 
+  async function resetPassword() {
+    if (draft.password.length < 8) {
+      setAdministrationError("Enter a password of at least 8 characters.");
+      return;
+    }
+    setAdministrationBusy(true);
+    const response = await authFetch(`${apiBaseUrl}/users/${draft.id}/reset-password`, token, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password: draft.password, temporaryPassword }),
+    });
+    const body = await response.json().catch(() => null);
+    setAdministrationBusy(false);
+    setAdministrationError(body?.message ?? "Unable to reset password.");
+    if (response.ok) setDraft(current => ({ ...current, password: "" }));
+  }
+
+  async function unlockUser() {
+    const response = await authFetch(`${apiBaseUrl}/users/${draft.id}/unlock`, token, { method: "POST" });
+    const body = await response.json().catch(() => null);
+    setAdministrationError(body?.message ?? "Unable to unlock account.");
+    if (response.ok) void loadAdministrationData();
+  }
+
   function toggleVessel(vesselId: string) {
     setDraft(current => {
       const exists =
@@ -1164,6 +2349,20 @@ function UserAdministrationDialog({
             <p>
               Roles and vessel access.
             </p>
+            <button type="button" onClick={() => void authFetch(`${apiBaseUrl}/auth/recovery-key`, token).then(async response => {
+              if (!response.ok) throw new Error("Unable to export recovery key.");
+              const url = URL.createObjectURL(await response.blob());
+              const link = document.createElement("a"); link.href = url; link.download = "FSM-Recovery.fsmkey"; link.click(); URL.revokeObjectURL(url);
+            }).catch(error => setAdministrationError((error as Error).message))}>Export Recovery Key</button>
+            <button type="button" onClick={() => {
+              if (!window.confirm("Rotate recovery key and invalidate the old key?")) return;
+              void authFetch(`${apiBaseUrl}/auth/recovery-key/rotate`, token, { method: "POST" }).then(async response => {
+                if (!response.ok) throw new Error("Unable to rotate recovery key.");
+                const url = URL.createObjectURL(await response.blob());
+                const link = document.createElement("a"); link.href = url; link.download = "FSM-Recovery.fsmkey"; link.click(); URL.revokeObjectURL(url);
+                setAdministrationError("Recovery key rotated successfully.");
+              }).catch(error => setAdministrationError((error as Error).message));
+            }}>Rotate Recovery Key</button>
           </div>
 
           <button
@@ -1207,12 +2406,14 @@ function UserAdministrationDialog({
                 onClick={() => selectUser(item)}
               >
                 <strong>{item.fullName}</strong>
-                <span>{item.email}</span>
+                <span>{item.username}</span>
+                {item.email && <small>{item.email}</small>}
                 <small>
                   {item.role}
                   {!item.isActive
                     ? " · Inactive"
                     : ""}
+                  {item.isLocked ? " · Locked" : ""}
                 </small>
               </button>
             ))}
@@ -1237,7 +2438,19 @@ function UserAdministrationDialog({
             </label>
 
             <label>
-              Email *
+              Username *
+              <input
+                value={draft.username}
+                onChange={event =>
+                  setDraft(current => ({
+                    ...current,
+                    username: event.target.value,
+                  }))}
+              />
+            </label>
+
+            <label>
+              Email (optional)
               <input
                 type="email"
                 value={draft.email}
@@ -1302,6 +2515,12 @@ function UserAdministrationDialog({
               Active user
             </label>
 
+            {!isNew && <label className="active-user-option">
+              <input type="checkbox" checked={temporaryPassword}
+                onChange={event => setTemporaryPassword(event.target.checked)} />
+              Force password change at next login
+            </label>}
+
             {draft.role !== "OfficeAdmin" &&
               <div className="vessel-assignment-block">
                 <strong>Assigned Vessels</strong>
@@ -1332,6 +2551,10 @@ function UserAdministrationDialog({
               </div>}
 
             <div className="service-request-actions">
+              {!isNew && <button type="button" disabled={administrationBusy}
+                onClick={unlockUser}>Unlock</button>}
+              {!isNew && <button type="button" disabled={administrationBusy || draft.password.length < 8}
+                onClick={resetPassword}>Reset Password</button>}
               <button
                 type="button"
                 disabled={administrationBusy}
@@ -1360,6 +2583,206 @@ function UserAdministrationDialog({
   );
 }
 
+function CreateVesselDialog({
+  token,
+  onClose,
+  onCreated,
+}: {
+  token: string;
+  onClose: () => void;
+  onCreated: (vessel: Vessel) => Promise<void>;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [created, setCreated] = useState<Vessel | null>(null);
+  const [draft, setDraft] = useState({
+    vesselName: "",
+    imoNumber: "",
+    flag: "",
+    companyName: "",
+    invoicingDetails: "",
+    accountingEmail: "",
+  });
+
+  async function create() {
+    if (!draft.vesselName.trim()) {
+      setError("Vessel Name is required.");
+      return;
+    }
+
+    if (!/^\d{7}$/.test(draft.imoNumber.trim())) {
+      setError("IMO Number must contain 7 digits.");
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/vessels`,
+        token,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            vesselName: draft.vesselName.trim(),
+            imoNumber: draft.imoNumber.trim(),
+            flag: draft.flag.trim() || null,
+            companyName: draft.companyName.trim() || null,
+            invoicingDetails:
+              draft.invoicingDetails.trim() || null,
+            accountingEmail:
+              draft.accountingEmail.trim() || null,
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(
+          body?.message ?? "Unable to create vessel.",
+        );
+      }
+
+      const item: Vessel = await response.json();
+      setCreated(item);
+      await onCreated(item);
+    } catch (exception) {
+      setError((exception as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="modal">
+      <div className="vessel-profile-dialog">
+        <div className="service-request-header">
+          <div>
+            <h2>Add Vessel</h2>
+            <p>Create a vessel in the Office fleet.</p>
+          </div>
+
+          <button type="button" disabled={busy} onClick={onClose}>
+            Close
+          </button>
+        </div>
+
+        {error && <div className="error">{error}</div>}
+
+        {created ? <div className="activation-code-panel">
+          <h3>Activation Code</h3>
+          <code>{created.activationCode}</code>
+          <button className="primary" onClick={() =>
+            navigator.clipboard.writeText(created.activationCode ?? "")}>
+            Copy
+          </button>
+          <p>This one-time code expires in 7 days.</p>
+          <div className="service-request-actions">
+            <button type="button" onClick={onClose}>Finish</button>
+          </div>
+        </div> : <>
+
+        <div className="vessel-profile-form">
+          <label>
+            Vessel Name *
+            <input
+              autoFocus
+              value={draft.vesselName}
+              onChange={event =>
+                setDraft(current => ({
+                  ...current,
+                  vesselName: event.target.value,
+                }))}
+            />
+          </label>
+
+          <label>
+            IMO Number *
+            <input
+              maxLength={7}
+              value={draft.imoNumber}
+              onChange={event =>
+                setDraft(current => ({
+                  ...current,
+                  imoNumber: event.target.value,
+                }))}
+            />
+          </label>
+
+          <label>
+            Flag
+            <input
+              value={draft.flag}
+              onChange={event =>
+                setDraft(current => ({
+                  ...current,
+                  flag: event.target.value,
+                }))}
+            />
+          </label>
+
+          <label>
+            Company Name
+            <input
+              value={draft.companyName}
+              onChange={event =>
+                setDraft(current => ({
+                  ...current,
+                  companyName: event.target.value,
+                }))}
+            />
+          </label>
+
+          <label className="wide-field">
+            Invoicing Details
+            <textarea
+              rows={5}
+              value={draft.invoicingDetails}
+              onChange={event =>
+                setDraft(current => ({
+                  ...current,
+                  invoicingDetails: event.target.value,
+                }))}
+            />
+          </label>
+
+          <label className="wide-field">
+            Accounting Email
+            <input
+              type="email"
+              value={draft.accountingEmail}
+              onChange={event =>
+                setDraft(current => ({
+                  ...current,
+                  accountingEmail: event.target.value,
+                }))}
+            />
+          </label>
+        </div>
+
+        <div className="service-request-actions">
+          <button type="button" disabled={busy} onClick={onClose}>
+            Cancel
+          </button>
+          <button
+            type="button"
+            className="primary"
+            disabled={busy}
+            onClick={create}
+          >
+            {busy ? "Creating..." : "Create Vessel"}
+          </button>
+        </div>
+        </>}
+      </div>
+    </div>
+  );
+}
+
 function VesselProfileDialog({
   token,
   userRole,
@@ -1375,11 +2798,12 @@ function VesselProfileDialog({
 }) {
   const canEdit = userRole === "OfficeAdmin";
 
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(true);
   const [profileBusy, setProfileBusy] =
     useState(false);
   const [profileError, setProfileError] =
     useState("");
+  const [activationCode, setActivationCode] = useState("");
 
   const [draft, setDraft] = useState({
     vesselName: vessel.vesselName,
@@ -1473,6 +2897,26 @@ function VesselProfileDialog({
     }
   }
 
+  async function generateActivationCode() {
+    setProfileBusy(true);
+    setProfileError("");
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/synchronization/activation/code/${vessel.id}`,
+        token,
+        { method: "POST" },
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok)
+        throw new Error(body?.message ?? "Unable to generate an activation code.");
+      setActivationCode(body.activationCode);
+    } catch (exception) {
+      setProfileError((exception as Error).message);
+    } finally {
+      setProfileBusy(false);
+    }
+  }
+
   return (
     <div className="modal">
       <div className="vessel-profile-dialog">
@@ -1497,6 +2941,18 @@ function VesselProfileDialog({
           <div className="error">
             {profileError}
           </div>}
+
+        {canEdit && <div className="activation-code-panel">
+          <h3>Ship Activation</h3>
+          {activationCode ? <>
+            <code>{activationCode}</code>
+            <button type="button" onClick={() =>
+              navigator.clipboard.writeText(activationCode)}>Copy</button>
+            <p>This one-time code expires in 7 days.</p>
+          </> :
+            <button type="button" disabled={profileBusy}
+              onClick={generateActivationCode}>Generate Activation Code</button>}
+        </div>}
 
         <div className="vessel-profile-form">
           <label>
@@ -1927,6 +3383,10 @@ function InspectionListDialog({
 }) {
   const [format, setFormat] =
     useState<InspectionListFormat>("pdf");
+  const [inspectionDate, setInspectionDate] = useState(new Date().toISOString().slice(0, 10));
+  const [inspector, setInspector] = useState("");
+  const [results, setResults] = useState<Record<string, { result: "OK" | "Defect" | "Not Applicable"; remarks: string; correctiveAction: string }>>({});
+  const [history, setHistory] = useState<{ id: string; reportNumber: string; inspectionDate: string; inspector: string; defects: number }[]>([]);
   const [includeCertificates, setIncludeCertificates] =
     useState(false);
   const [inspectionBusy, setInspectionBusy] =
@@ -1937,6 +3397,10 @@ function InspectionListDialog({
   const selectedEquipment = equipment.filter(item =>
     selectedIds.has(item.id),
   );
+  useEffect(() => {
+    authFetch(`${apiBaseUrl}/inspection-list/vessels/${vessel.id}/history`, token)
+      .then(r => r.ok ? r.json() : []).then(setHistory).catch(() => undefined);
+  }, []);
 
   async function generateInspectionList() {
     if (selectedEquipment.length === 0) {
@@ -1964,6 +3428,9 @@ function InspectionListDialog({
               selectedEquipment.map(item => item.id),
             format,
             includeCertificates,
+            inspectionDate,
+            inspector,
+            results: selectedEquipment.map(item => ({ equipmentId: item.id, ...(results[item.id] || { result: "OK", remarks: "", correctiveAction: "" }) })),
           }),
         },
       );
@@ -2049,22 +3516,14 @@ function InspectionListDialog({
             <input
               type="radio"
               name="inspection-format"
-              checked={format === "excel"}
-              onChange={() => setFormat("excel")}
-            />
-            Excel
-          </label>
-
-          <label className="attachment-option">
-            <input
-              type="radio"
-              name="inspection-format"
               checked={format === "pdf"}
               onChange={() => setFormat("pdf")}
             />
-            Printable PDF
+            Completed PDF report
           </label>
         </div>
+
+        <div className="form-grid"><label>Inspection date<input type="date" value={inspectionDate} onChange={e => setInspectionDate(e.target.value)} /></label><label>Inspector<input value={inspector} onChange={e => setInspector(e.target.value)} placeholder="Inspector name" /></label></div>
 
         <div className="attachments-block">
           <span>Attachments</span>
@@ -2108,9 +3567,12 @@ function InspectionListDialog({
                   ? ` · Expiry ${formatDate(item.expiryDate)}`
                   : ""}
               </span>
+              <div className="form-grid"><label>Result<select value={results[item.id]?.result || "OK"} onChange={e => setResults(current => ({ ...current, [item.id]: { ...(current[item.id] || { remarks: "", correctiveAction: "" }), result: e.target.value as "OK" | "Defect" | "Not Applicable" } }))}><option>OK</option><option>Defect</option><option>Not Applicable</option></select></label><label>Remarks<input value={results[item.id]?.remarks || ""} onChange={e => setResults(current => ({ ...current, [item.id]: { ...(current[item.id] || { result: "OK", correctiveAction: "" }), remarks: e.target.value } }))} /></label><label>Corrective action<input value={results[item.id]?.correctiveAction || ""} onChange={e => setResults(current => ({ ...current, [item.id]: { ...(current[item.id] || { result: "OK", remarks: "" }), correctiveAction: e.target.value } }))} /></label></div>
             </div>
           ))}
         </div>
+
+        <h3>Inspection history</h3><div className="selected-equipment-list">{history.length === 0 ? <span className="muted">No completed PDF reports.</span> : history.map(report => <div className="selected-equipment-item" key={report.id}><strong>{report.reportNumber}</strong><span>{formatDate(report.inspectionDate)} · {report.inspector} · {report.defects} open defect(s)</span><button onClick={() => authFetch(`${apiBaseUrl}/inspection-list/reports/${report.id}/pdf`, token).then(async response => { if (!response.ok) return; const url = URL.createObjectURL(await response.blob()); window.open(url, "_blank"); })}>Open PDF</button></div>)}</div>
 
         <div className="service-request-actions">
           <button
@@ -2426,51 +3888,13 @@ function EquipmentDetails({
   const update = <K extends keyof Equipment>(key: K, value: Equipment[K]) =>
     setDraft(current => ({ ...current, [key]: value }));
 
-  if (!editing) {
-    return (
-      <>
-        <div className="details-header">
-          <h2>{item.equipmentName}</h2>
-          <button className="primary" onClick={() => setEditing(true)}>Edit</button>
-        </div>
-        <div className="details-grid">
-          <Detail label="Category" value={item.category} />
-          <Detail label="Maker" value={item.maker || "—"} />
-          <Detail label="Model" value={item.model || "—"} />
-          <Detail label="Serial Number" value={item.serialNumber || "—"} />
-          <Detail label="Quantity" value={String(item.quantity)} />
-          <Detail label="Inspection By" value={item.inspectionBy} />
-          <Detail label="Expiry Date" value={formatDate(item.expiryDate)} />
-          <Detail label="Status" value={item.status} />
-        </div>
-        <div className="remarks">
-          <span>Remarks</span>
-          <p>{item.remarks || "—"}</p>
-        </div>
-
-        <section className="documents-section">
-          <h3>Reports & Certificates</h3>
-          <DocumentControl
-            token={token}
-            equipmentId={item.id}
-            type="report"
-            available={item.reportAvailable}
-            fileName={item.reportFileName}
-            onChanged={onDocumentsChanged}
-          />
-          <DocumentControl
-            token={token}
-            equipmentId={item.id}
-            type="certificate"
-            available={item.certificateAvailable}
-            fileName={item.certificateFileName}
-            onChanged={onDocumentsChanged}
-          />
-        </section>
-
-      </>
-    );
-  }
+  const editableKeys: (keyof Equipment)[] = [
+    "category", "equipmentName", "maker", "model", "serialNumber",
+    "quantity", "inspectionBy", "expiryDate", "remarks",
+  ];
+  const hasChanges = editableKeys.some(key =>
+    (draft[key] ?? "") !== (item[key] ?? ""),
+  );
 
   return (
     <form
@@ -2482,6 +3906,10 @@ function EquipmentDetails({
         }
         if (draft.quantity < 1) {
           setError("Quantity must be greater than zero.");
+          return;
+        }
+        if (draft.expiryDate && !isValidDateInput(draft.expiryDate)) {
+          setError("Enter a valid Expiry Date.");
           return;
         }
 
@@ -2503,6 +3931,7 @@ function EquipmentDetails({
                 quantity: draft.quantity,
                 inspectionBy: inspectionToApi(draft.inspectionBy),
                 expiryDate: draft.expiryDate || null,
+                responsible: draft.responsible?.trim() || null,
                 remarks: draft.remarks || null,
               }),
             },
@@ -2525,7 +3954,9 @@ function EquipmentDetails({
       }}
     >
       <div className="details-header">
-        <h2>Edit Equipment</h2>
+        <h2>Equipment Details</h2>
+        {!editing &&
+          <button type="button" onClick={() => setEditing(true)}>Edit</button>}
       </div>
 
       {error && <div className="error">{error}</div>}
@@ -2535,6 +3966,7 @@ function EquipmentDetails({
           Category *
           <select
             value={draft.category}
+            disabled={!editing || busy}
             onChange={event => update("category", event.target.value as Equipment["category"])}
           >
             {categories.map(category => <option key={category}>{category}</option>)}
@@ -2545,6 +3977,7 @@ function EquipmentDetails({
           Equipment *
           <input
             value={draft.equipmentName}
+            disabled={!editing || busy}
             onChange={event => update("equipmentName", event.target.value)}
           />
         </label>
@@ -2553,6 +3986,7 @@ function EquipmentDetails({
           Maker
           <input
             value={draft.maker || ""}
+            disabled={!editing || busy}
             onChange={event => update("maker", event.target.value)}
           />
         </label>
@@ -2561,6 +3995,7 @@ function EquipmentDetails({
           Model
           <input
             value={draft.model || ""}
+            disabled={!editing || busy}
             onChange={event => update("model", event.target.value)}
           />
         </label>
@@ -2569,6 +4004,7 @@ function EquipmentDetails({
           Serial Number
           <input
             value={draft.serialNumber || ""}
+            disabled={!editing || busy}
             onChange={event => update("serialNumber", event.target.value)}
           />
         </label>
@@ -2579,6 +4015,7 @@ function EquipmentDetails({
             type="number"
             min={1}
             value={draft.quantity}
+            disabled={!editing || busy}
             onChange={event => update("quantity", Number(event.target.value))}
           />
         </label>
@@ -2587,6 +4024,7 @@ function EquipmentDetails({
           Inspection By *
           <select
             value={draft.inspectionBy}
+            disabled={!editing || busy}
             onChange={event => update("inspectionBy", event.target.value as Equipment["inspectionBy"])}
           >
             <option>Crew</option>
@@ -2599,7 +4037,17 @@ function EquipmentDetails({
           <input
             type="date"
             value={draft.expiryDate || ""}
+            disabled={!editing || busy}
             onChange={event => update("expiryDate", event.target.value)}
+          />
+        </label>
+
+        <label>
+          Responsible
+          <input
+            value={draft.responsible || ""}
+            disabled
+            onChange={event => update("responsible", event.target.value)}
           />
         </label>
 
@@ -2608,10 +4056,31 @@ function EquipmentDetails({
           <textarea
             rows={5}
             value={draft.remarks || ""}
+            disabled={!editing || busy}
             onChange={event => update("remarks", event.target.value)}
           />
         </label>
       </div>
+
+      <section className="documents-section">
+        <h3>Reports & Certificates</h3>
+        <DocumentControl
+          token={token}
+          equipmentId={item.id}
+          type="report"
+          available={item.reportAvailable}
+          fileName={item.reportFileName}
+          onChanged={onDocumentsChanged}
+        />
+        <DocumentControl
+          token={token}
+          equipmentId={item.id}
+          type="certificate"
+          available={item.certificateAvailable}
+          fileName={item.certificateFileName}
+          onChanged={onDocumentsChanged}
+        />
+      </section>
 
       <div className="details-actions">
         <button
@@ -2639,20 +4108,22 @@ function EquipmentDetails({
         >
           Delete
         </button>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => {
-            setDraft(item);
-            setEditing(false);
-            setError("");
-          }}
-        >
-          Cancel
-        </button>
-        <button className="primary" type="submit" disabled={busy}>
-          {busy ? "Saving..." : "Save"}
-        </button>
+        {editing && <>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setDraft(item);
+              setError("");
+              setEditing(false);
+            }}
+          >
+            Cancel
+          </button>
+          <button className="primary" type="submit" disabled={busy || !hasChanges}>
+            {busy ? "Saving..." : "Save"}
+          </button>
+        </>}
       </div>
     </form>
   );
@@ -2833,6 +4304,69 @@ function DocumentControl({
       </div>
     </div>
   );
+}
+
+function MedicineDialog({ token, vessel, onClose }: {
+  token: string; vessel: Vessel; onClose: () => void;
+}) {
+  const [items, setItems] = useState<MedicineItem[]>([]);
+  const [configuration, setConfiguration] = useState({ categoryAEnabled: false, categoryBEnabled: false, dangerousGoodsEnabled: false, warningDays: 60 });
+  const [message, setMessage] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<{ item: string; action: string }[]>([]);
+  const [draft, setDraft] = useState({ itemName: "", formStrength: "", requiredQuantity: 0, actualQuantity: 0, unit: "", batchNumber: "", expiryDate: "", storageLocation: "", medicalCategory: "B", isDangerousGoods: false, replacementRequired: false, remarks: "" });
+
+  async function load() {
+    const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine`, token);
+    if (!response.ok) throw new Error("Unable to load Medicine Chest.");
+    const data = await response.json(); setItems(data.items); setConfiguration(data.configuration);
+  }
+  useEffect(() => { load().catch(e => setMessage(e.message)); }, []);
+  async function saveConfiguration(next = configuration) {
+    const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine/configuration`, token, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
+    if (!response.ok) throw new Error("Medicine configuration could not be saved."); setMessage("Configuration saved.");
+  }
+  async function addItem() {
+    const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine/items`, token, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...draft, isActive: true, isStandardTemplateItem: false, expiryDate: draft.expiryDate || null }) });
+    if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.message || "Medicine item could not be added."); }
+    setDraft({ ...draft, itemName: "", formStrength: "", unit: "", batchNumber: "", expiryDate: "", remarks: "" }); await load();
+  }
+  async function deactivate(item: MedicineItem) {
+    const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine/items/${item.id}`, token, { method: "DELETE" });
+    if (!response.ok) throw new Error("Medicine item could not be removed."); await load();
+  }
+  async function download(kind: "export" | "replenishment") {
+    const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine/${kind}`, token); if (!response.ok) throw new Error("Workbook could not be generated.");
+    const url = URL.createObjectURL(await response.blob()); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${kind}-${vessel.vesselName}.xlsx`; anchor.click(); URL.revokeObjectURL(url);
+  }
+  async function importTemplate(apply: boolean) {
+    if (!file) return; const body = new FormData(); body.append("file", file);
+    const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine/import?apply=${apply}&overwriteActual=false`, token, { method: "POST", body });
+    const result = await response.json(); if (!response.ok) throw new Error(result.message || "Template validation failed.");
+    if (apply) { setPreview([]); setMessage(`${result.imported} template rows imported without overwriting onboard quantities.`); await load(); } else setPreview(result.preview);
+  }
+  const act = (operation: () => Promise<void>) => operation().catch(e => setMessage(e.message));
+  return <div className="modal-backdrop"><div className="modal-card wide-modal">
+    <div className="modal-header"><div><h2>Medicine Chest</h2><p>{vessel.vesselName} · IMO {vessel.imoNumber}</p></div><button onClick={onClose}>Close</button></div>
+    {message && <div className="notice">{message}</div>}
+    <section><h3>Vessel configuration</h3><div className="form-grid">
+      {(["categoryAEnabled", "categoryBEnabled", "dangerousGoodsEnabled"] as const).map((key) => <label key={key}><input type="checkbox" checked={configuration[key]} onChange={e => setConfiguration({ ...configuration, [key]: e.target.checked })} /> {key === "categoryAEnabled" ? "Category A" : key === "categoryBEnabled" ? "Category B" : "Dangerous Goods"}</label>)}
+      <label>Expiry warning days<input type="number" min="0" max="730" value={configuration.warningDays} onChange={e => setConfiguration({ ...configuration, warningDays: Number(e.target.value) })} /></label>
+    </div><button onClick={() => act(() => saveConfiguration())}>Save configuration</button></section>
+    <section><h3>Add company-specific item</h3><div className="form-grid">
+      <label>English item name<input value={draft.itemName} onChange={e => setDraft({ ...draft, itemName: e.target.value })} /></label><label>Form / strength<input value={draft.formStrength} onChange={e => setDraft({ ...draft, formStrength: e.target.value })} /></label>
+      <label>Required quantity<input type="number" min="0" value={draft.requiredQuantity} onChange={e => setDraft({ ...draft, requiredQuantity: Number(e.target.value) })} /></label><label>Actual quantity<input type="number" min="0" value={draft.actualQuantity} onChange={e => setDraft({ ...draft, actualQuantity: Number(e.target.value) })} /></label>
+      <label>Unit<input value={draft.unit} onChange={e => setDraft({ ...draft, unit: e.target.value })} /></label><label>Batch number<input value={draft.batchNumber} onChange={e => setDraft({ ...draft, batchNumber: e.target.value })} /></label>
+      <label>Expiry date<input type="date" value={draft.expiryDate} onChange={e => setDraft({ ...draft, expiryDate: e.target.value })} /></label><label>Storage location<input value={draft.storageLocation} onChange={e => setDraft({ ...draft, storageLocation: e.target.value })} /></label>
+      <label>Category<select value={draft.medicalCategory} onChange={e => setDraft({ ...draft, medicalCategory: e.target.value })}><option>A</option><option>B</option></select></label><label><input type="checkbox" checked={draft.isDangerousGoods} onChange={e => setDraft({ ...draft, isDangerousGoods: e.target.checked })} /> Dangerous Goods list</label>
+      <label><input type="checkbox" checked={draft.replacementRequired} onChange={e => setDraft({ ...draft, replacementRequired: e.target.checked })} /> Replacement required</label><label>Remarks<input value={draft.remarks} onChange={e => setDraft({ ...draft, remarks: e.target.value })} /></label>
+    </div><button className="primary" disabled={!draft.itemName.trim() || !draft.unit.trim()} onClick={() => act(addItem)}>Add item</button></section>
+    <section><div className="workspace-actions"><h3>Register</h3><button onClick={() => act(() => download("export"))}>Export register</button><button onClick={() => act(() => download("replenishment"))}>Replenishment XLSX</button></div>
+      <div className="table-scroll"><table><thead><tr><th>Item</th><th>List</th><th>Required</th><th>Actual</th><th>Batch</th><th>Expiry</th><th>Status</th><th></th></tr></thead><tbody>{items.map(item => <tr key={item.id}><td>{item.itemName}<small>{item.formStrength}</small></td><td>{item.isDangerousGoods ? "Dangerous Goods" : `Category ${item.medicalCategory || "—"}`}</td><td>{item.requiredQuantity} {item.unit}</td><td>{item.actualQuantity} {item.unit}</td><td>{item.batchNumber || "—"}</td><td>{formatDate(item.expiryDate)}</td><td><span className={`status ${item.status.toLowerCase().replace(/ /g, "-")}`}>{item.status}</span></td><td><button onClick={() => act(() => deactivate(item))}>{item.isStandardTemplateItem ? "Deactivate" : "Remove"}</button></td></tr>)}</tbody></table></div>
+    </section>
+    <section><h3>Approved template import</h3><p className="muted">No regulatory list is bundled. Import an approved Excel or CSV template; preview is mandatory and actual quantities are preserved.</p><input type="file" accept=".xlsx,.csv" onChange={e => { setFile(e.target.files?.[0] || null); setPreview([]); }} /><button disabled={!file} onClick={() => act(() => importTemplate(false))}>Preview import</button>{preview.length > 0 && <><ul>{preview.map((x, i) => <li key={i}>{x.item}: {x.action}</li>)}</ul><button className="primary" onClick={() => act(() => importTemplate(true))}>Apply approved template</button></>}
+    </section>
+  </div></div>;
 }
 
 function Detail({ label, value }: { label: string; value: string }) {

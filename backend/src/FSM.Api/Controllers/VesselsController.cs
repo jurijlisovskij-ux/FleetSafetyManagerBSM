@@ -1,4 +1,5 @@
-using System.Security.Claims;
+using FSM.Api.Authorization;
+using FSM.Api.Synchronization;
 using FSM.Domain.Entities;
 using FSM.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
@@ -18,35 +19,22 @@ public sealed record SaveVesselRequest(
 [ApiController]
 [Authorize]
 [Route("api/vessels")]
-public sealed class VesselsController(FsmDbContext db) : ControllerBase
+public sealed class VesselsController(
+    FsmDbContext db,
+    VesselAccessService vesselAccess,
+    SynchronizationProvisioningService provisioning) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> GetAssigned(
         CancellationToken cancellationToken)
     {
-        var userIdValue =
-            User.FindFirstValue(ClaimTypes.NameIdentifier);
-        var role =
-            User.FindFirstValue(ClaimTypes.Role);
-
-        if (!Guid.TryParse(userIdValue, out var userId))
+        var vessels = await vesselAccess.GetAccessibleVesselsAsync(
+            User,
+            cancellationToken);
+        if (vessels is null)
             return Unauthorized();
 
-        var query = db.Vessels.AsNoTracking();
-
-        if (!string.Equals(
-            role,
-            "OfficeAdmin",
-            StringComparison.Ordinal))
-        {
-            query = query.Where(vessel =>
-                db.UserVessels.Any(assignment =>
-                    assignment.UserId == userId &&
-                    assignment.VesselId == vessel.Id));
-        }
-
-        var vessels = await query
-            .OrderBy(x => x.VesselName)
+        var response = vessels
             .Select(x => new
             {
                 x.Id,
@@ -59,9 +47,9 @@ public sealed class VesselsController(FsmDbContext db) : ControllerBase
                 DisplayName =
                     $"{x.VesselName} (IMO {x.ImoNumber})"
             })
-            .ToListAsync(cancellationToken);
+            .ToList();
 
-        return Ok(vessels);
+        return Ok(response);
     }
 
     [Authorize(Roles = "OfficeAdmin")]
@@ -106,21 +94,44 @@ public sealed class VesselsController(FsmDbContext db) : ControllerBase
         };
 
         db.Vessels.Add(vessel);
-        await db.SaveChangesAsync(cancellationToken);
+        var (_, activationCode) = provisioning.ProvisionNewVessel(vessel);
+        var savedRecords = await db.SaveChangesAsync(cancellationToken);
+        if (savedRecords < 1)
+        {
+            return StatusCode(StatusCodes.Status500InternalServerError, new
+            {
+                message = "The vessel was not written to the database."
+            });
+        }
+
+        // Do not report a successful create until SQLite can read the row
+        // back independently of the DbContext change tracker.
+        var persisted = await db.Vessels
+            .IgnoreQueryFilters()
+            .AsNoTracking()
+            .SingleOrDefaultAsync(x => x.Id == vessel.Id, cancellationToken);
+        if (persisted is null || persisted.IsDeleted)
+        {
+            return StatusCode(StatusCodes.Status500InternalServerError, new
+            {
+                message = "The vessel could not be read back from the database after saving."
+            });
+        }
 
         return Created(
-            $"/api/vessels/{vessel.Id}",
+            $"/api/vessels/{persisted.Id}",
             new
             {
-                vessel.Id,
-                vessel.VesselName,
-                vessel.ImoNumber,
-                vessel.Flag,
-                vessel.CompanyName,
-                vessel.InvoicingDetails,
-                vessel.AccountingEmail,
+                persisted.Id,
+                persisted.VesselName,
+                persisted.ImoNumber,
+                persisted.Flag,
+                persisted.CompanyName,
+                persisted.InvoicingDetails,
+                persisted.AccountingEmail,
+                activationCode,
                 DisplayName =
-                    $"{vessel.VesselName} (IMO {vessel.ImoNumber})"
+                    $"{persisted.VesselName} (IMO {persisted.ImoNumber})"
             });
     }
 

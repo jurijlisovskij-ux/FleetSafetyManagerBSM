@@ -1,10 +1,11 @@
-using System.Security.Claims;
+using FSM.Api.Authorization;
 using FSM.Domain.Entities;
 using FSM.Domain.Enums;
 using FSM.Infrastructure.Persistence;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Globalization;
 
 namespace FSM.Api.Controllers;
 
@@ -16,13 +17,16 @@ public sealed record SaveEquipmentRequest(
     string? SerialNumber,
     int Quantity,
     InspectionBy InspectionBy,
-    DateOnly? ExpiryDate,
+    string? ExpiryDate,
+    string? Responsible,
     string? Remarks);
 
 [ApiController]
 [Authorize]
 [Route("api/vessels/{vesselId:guid}/equipment")]
-public sealed class EquipmentController(FsmDbContext db) : ControllerBase
+public sealed class EquipmentController(
+    FsmDbContext db,
+    VesselAccessService vesselAccess) : ControllerBase
 {
     [HttpGet]
     public async Task<IActionResult> GetByVessel(
@@ -82,8 +86,8 @@ public sealed class EquipmentController(FsmDbContext db) : ControllerBase
             Quantity = request.Quantity,
             InspectionBy =
                 request.InspectionBy,
-            ExpiryDate =
-                request.ExpiryDate,
+            ExpiryDate = ParseExpiryDate(request.ExpiryDate),
+            Responsible = Clean(request.Responsible),
             Remarks =
                 request.Remarks?.Trim()
         };
@@ -127,7 +131,8 @@ public sealed class EquipmentController(FsmDbContext db) : ControllerBase
         item.SerialNumber = Clean(request.SerialNumber);
         item.Quantity = request.Quantity;
         item.InspectionBy = request.InspectionBy;
-        item.ExpiryDate = request.ExpiryDate;
+        item.ExpiryDate = ParseExpiryDate(request.ExpiryDate);
+        item.Responsible = Clean(request.Responsible);
         item.Remarks = request.Remarks?.Trim();
 
         await db.SaveChangesAsync(cancellationToken);
@@ -160,26 +165,17 @@ public sealed class EquipmentController(FsmDbContext db) : ControllerBase
         Guid vesselId,
         CancellationToken cancellationToken)
     {
-        var userIdText = User.FindFirstValue(ClaimTypes.NameIdentifier);
-        var role = User.FindFirstValue(ClaimTypes.Role);
-
-        if (!Guid.TryParse(userIdText, out var userId))
-            return Unauthorized();
-
         var vesselExists = await db.Vessels.AsNoTracking()
             .AnyAsync(x => x.Id == vesselId, cancellationToken);
 
         if (!vesselExists) return NotFound();
 
-        if (string.Equals(role, "OfficeAdmin", StringComparison.Ordinal))
-            return null;
-
-        var assigned = await db.UserVessels.AsNoTracking()
-            .AnyAsync(
-                x => x.UserId == userId && x.VesselId == vesselId,
-                cancellationToken);
-
-        return assigned ? null : Forbid();
+        return await vesselAccess.CanAccessVesselAsync(
+            User,
+            vesselId,
+            cancellationToken)
+                ? null
+                : Forbid();
     }
 
     private static string? Validate(SaveEquipmentRequest request)
@@ -188,8 +184,21 @@ public sealed class EquipmentController(FsmDbContext db) : ControllerBase
             return "Equipment Name is required.";
         if (request.Quantity < 1)
             return "Quantity must be greater than zero.";
+        if (!string.IsNullOrWhiteSpace(request.ExpiryDate) &&
+            ParseExpiryDate(request.ExpiryDate) is null)
+            return "Enter a valid Expiry Date.";
         return null;
     }
+
+    private static DateOnly? ParseExpiryDate(string? value) =>
+        DateOnly.TryParseExact(
+            value,
+            "yyyy-MM-dd",
+            CultureInfo.InvariantCulture,
+            DateTimeStyles.None,
+            out var date)
+                ? date
+                : null;
 
     private static string? Clean(string? value) =>
         string.IsNullOrWhiteSpace(value) ? null : value.Trim();
@@ -210,6 +219,7 @@ public sealed class EquipmentController(FsmDbContext db) : ControllerBase
             ? "Service Company"
             : "Crew",
         x.ExpiryDate,
+        x.Responsible,
         Status = x.CalculateStatus(today, 60).ToString(),
         x.Remarks,
         ReportAvailable =

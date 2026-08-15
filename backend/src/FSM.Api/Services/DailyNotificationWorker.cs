@@ -69,7 +69,7 @@ public sealed class DailyNotificationWorker(
 
         var users = await db.Users
             .AsNoTracking()
-            .Where(x => x.IsActive)
+            .Where(x => x.IsActive && x.Email != null && x.Email != "")
             .Select(x => new
             {
                 x.Id,
@@ -113,7 +113,7 @@ public sealed class DailyNotificationWorker(
                 today);
 
             await emailSender.SendAsync(
-                user.Email,
+                user.Email!,
                 "Fleet Safety Manager — Soon and Overdue Equipment",
                 html,
                 cancellationToken);

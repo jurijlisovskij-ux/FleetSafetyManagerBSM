@@ -20,16 +20,202 @@ public static class SchemaUpgrade
             await AddColumnIfMissingAsync(
                 db, "equipment", "CurrentCertificateFileName", "TEXT");
             await AddColumnIfMissingAsync(
+                db, "equipment", "Responsible", "TEXT");
+            await AddColumnIfMissingAsync(
                 db, "vessels", "CompanyName", "TEXT");
             await AddColumnIfMissingAsync(
                 db, "vessels", "InvoicingDetails", "TEXT");
             await AddColumnIfMissingAsync(
                 db, "vessels", "AccountingEmail", "TEXT");
+            await AddSynchronizationColumnsAsync(db, "users");
+            await AddSynchronizationColumnsAsync(db, "vessels");
+            await AddSynchronizationColumnsAsync(db, "equipment");
+            await AddSynchronizationColumnsAsync(db, "user_vessels");
+            await AddColumnIfMissingAsync(db, "users", "ForcePasswordChange", "INTEGER NOT NULL DEFAULT 0");
+            await AddColumnIfMissingAsync(db, "users", "IsLocked", "INTEGER NOT NULL DEFAULT 0");
+            await AddColumnIfMissingAsync(db, "users", "FailedLoginAttempts", "INTEGER NOT NULL DEFAULT 0");
+            await UpgradeUserIdentityAsync(db);
+            await CreateSynchronizationTablesAsync(db);
+            await AddColumnIfMissingAsync(db, "synchronization_settings", "Enabled", "INTEGER NOT NULL DEFAULT 0");
+            await AddColumnIfMissingAsync(db, "synchronization_settings", "AllowInsecureHttp", "INTEGER NOT NULL DEFAULT 0");
+            await AddColumnIfMissingAsync(db, "synchronization_settings", "SynchronizationIdentity", "TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000'");
+            await AddColumnIfMissingAsync(db, "synchronization_settings", "ActivationCodeHash", "TEXT NULL");
+            await AddColumnIfMissingAsync(db, "synchronization_settings", "ActivationCodeExpiresUtc", "TEXT NULL");
+            await AddColumnIfMissingAsync(db, "synchronization_settings", "ActivationCodeUsedUtc", "TEXT NULL");
+            await AddColumnIfMissingAsync(db, "synchronization_settings", "RetryCount", "INTEGER NOT NULL DEFAULT 0");
+            await AddColumnIfMissingAsync(db, "synchronization_settings", "NextRetryUtc", "TEXT NULL");
+            await AddColumnIfMissingAsync(db, "synchronization_logs", "EndpointHost", "TEXT NULL");
+            await AddColumnIfMissingAsync(db, "synchronization_logs", "HttpStatus", "INTEGER NULL");
+            await AddColumnIfMissingAsync(db, "synchronization_logs", "Phase", "TEXT NULL");
+            await AddColumnIfMissingAsync(db, "synchronization_logs", "RejectedItems", "INTEGER NOT NULL DEFAULT 0");
+            await CreateSecurityTablesAsync(db);
+            await CreateMedicineTablesAsync(db);
+            await CreateInspectionTablesAsync(db);
         }
         finally
         {
             await db.Database.CloseConnectionAsync();
         }
+    }
+
+    private static async Task UpgradeUserIdentityAsync(FsmDbContext db)
+    {
+        await AddColumnIfMissingAsync(db, "users", "Username", "TEXT");
+        await db.Database.ExecuteSqlRawAsync("""
+            UPDATE users SET Username = Email
+            WHERE Username IS NULL OR TRIM(Username) = '';
+            DROP INDEX IF EXISTS IX_users_Email;
+            DROP INDEX IF EXISTS IX_users_Username;
+            CREATE UNIQUE INDEX IX_users_Username
+              ON users(Username COLLATE NOCASE);
+            """);
+    }
+
+    private static async Task CreateInspectionTablesAsync(FsmDbContext db)
+    {
+        const string sql = """
+            CREATE TABLE IF NOT EXISTS inspection_reports (
+              Id TEXT NOT NULL PRIMARY KEY, VesselId TEXT NOT NULL, ReportNumber TEXT NOT NULL,
+              InspectionDate TEXT NOT NULL, Inspector TEXT NOT NULL, PdfPath TEXT NOT NULL,
+              PdfSha256 TEXT NOT NULL, LastModifiedUtc TEXT NOT NULL, IsDeleted INTEGER NOT NULL DEFAULT 0,
+              FOREIGN KEY (VesselId) REFERENCES vessels(Id) ON DELETE CASCADE);
+            CREATE UNIQUE INDEX IF NOT EXISTS IX_inspection_reports_ReportNumber ON inspection_reports(ReportNumber);
+            CREATE INDEX IF NOT EXISTS IX_inspection_reports_VesselId_InspectionDate ON inspection_reports(VesselId, InspectionDate);
+            CREATE TABLE IF NOT EXISTS inspection_report_items (
+              Id TEXT NOT NULL PRIMARY KEY, InspectionReportId TEXT NOT NULL, EquipmentId TEXT NOT NULL,
+              Result TEXT NOT NULL, Remarks TEXT NULL, CorrectiveAction TEXT NULL, AttachmentPath TEXT NULL,
+              ClosureDate TEXT NULL, ClosedBy TEXT NULL, ClosureRemarks TEXT NULL, ClosureAttachmentPath TEXT NULL,
+              LastModifiedUtc TEXT NOT NULL, IsDeleted INTEGER NOT NULL DEFAULT 0,
+              FOREIGN KEY (InspectionReportId) REFERENCES inspection_reports(Id) ON DELETE CASCADE,
+              FOREIGN KEY (EquipmentId) REFERENCES equipment(Id) ON DELETE RESTRICT);
+            CREATE INDEX IF NOT EXISTS IX_inspection_report_items_ReportId ON inspection_report_items(InspectionReportId);
+            """;
+        await db.Database.ExecuteSqlRawAsync(sql);
+    }
+
+    private static async Task CreateMedicineTablesAsync(FsmDbContext db)
+    {
+        const string sql = """
+            CREATE TABLE IF NOT EXISTS medicine_items (
+              Id TEXT NOT NULL PRIMARY KEY, VesselId TEXT NOT NULL, ItemName TEXT NOT NULL,
+              FormStrength TEXT NULL, RequiredQuantity TEXT NOT NULL, ActualQuantity TEXT NOT NULL,
+              Unit TEXT NOT NULL, BatchNumber TEXT NULL, ExpiryDate TEXT NULL, StorageLocation TEXT NULL,
+              MedicalCategory TEXT NULL, IsDangerousGoods INTEGER NOT NULL, ReplacementRequired INTEGER NOT NULL,
+              Remarks TEXT NULL, IsActive INTEGER NOT NULL, IsStandardTemplateItem INTEGER NOT NULL,
+              LastModifiedUtc TEXT NOT NULL, IsDeleted INTEGER NOT NULL DEFAULT 0,
+              FOREIGN KEY (VesselId) REFERENCES vessels(Id) ON DELETE CASCADE);
+            CREATE UNIQUE INDEX IF NOT EXISTS IX_medicine_items_identity
+              ON medicine_items(VesselId, ItemName, FormStrength, IsDangerousGoods);
+            CREATE TABLE IF NOT EXISTS vessel_medicine_configuration (
+              VesselId TEXT NOT NULL PRIMARY KEY, CategoryAEnabled INTEGER NOT NULL,
+              CategoryBEnabled INTEGER NOT NULL, DangerousGoodsEnabled INTEGER NOT NULL,
+              WarningDays INTEGER NOT NULL, LastModifiedUtc TEXT NOT NULL,
+              IsDeleted INTEGER NOT NULL DEFAULT 0,
+              FOREIGN KEY (VesselId) REFERENCES vessels(Id) ON DELETE CASCADE);
+            """;
+        await db.Database.ExecuteSqlRawAsync(sql);
+    }
+
+    private static async Task CreateSecurityTablesAsync(FsmDbContext db)
+    {
+        const string sql = """
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                Id TEXT NOT NULL PRIMARY KEY,
+                DateUtc TEXT NOT NULL,
+                Action TEXT NOT NULL,
+                Operator TEXT NOT NULL,
+                TargetUser TEXT NULL,
+                ComputerName TEXT NOT NULL,
+                Result TEXT NOT NULL,
+                Summary TEXT NULL
+            );
+            CREATE INDEX IF NOT EXISTS IX_audit_logs_DateUtc ON audit_logs (DateUtc);
+            """;
+        await db.Database.ExecuteSqlRawAsync(sql);
+    }
+
+    private static async Task AddSynchronizationColumnsAsync(
+        FsmDbContext db,
+        string tableName)
+    {
+        await AddColumnIfMissingAsync(
+            db,
+            tableName,
+            "LastModifiedUtc",
+            "TEXT NOT NULL DEFAULT '1970-01-01 00:00:00'");
+        await AddColumnIfMissingAsync(
+            db,
+            tableName,
+            "IsDeleted",
+            "INTEGER NOT NULL DEFAULT 0");
+    }
+
+    private static async Task CreateSynchronizationTablesAsync(
+        FsmDbContext db)
+    {
+        const string sql = """
+            CREATE TABLE IF NOT EXISTS synchronization_settings (
+                VesselId TEXT NOT NULL PRIMARY KEY,
+                SynchronizationIdentity TEXT NOT NULL DEFAULT '00000000-0000-0000-0000-000000000000',
+                RemoteBaseUrl TEXT NULL,
+                TokenHash TEXT NULL,
+                ProtectedToken TEXT NULL,
+                ActivationCodeHash TEXT NULL,
+                ActivationCodeExpiresUtc TEXT NULL,
+                ActivationCodeUsedUtc TEXT NULL,
+                Enabled INTEGER NOT NULL DEFAULT 0,
+                AllowInsecureHttp INTEGER NOT NULL DEFAULT 0,
+                AutomaticIntervalHours INTEGER NOT NULL DEFAULT 24,
+                LastUploadedUtc TEXT NOT NULL DEFAULT '1970-01-01 00:00:00',
+                RemoteCursorUtc TEXT NOT NULL DEFAULT '1970-01-01 00:00:00',
+                LastModifiedUtc TEXT NOT NULL DEFAULT '1970-01-01 00:00:00',
+                LastAttemptUtc TEXT NULL,
+                LastSynchronizationUtc TEXT NULL,
+                LastStatus TEXT NOT NULL DEFAULT 'Warning',
+                CurrentStage TEXT NOT NULL DEFAULT 'Idle',
+                LastError TEXT NULL,
+                RetryCount INTEGER NOT NULL DEFAULT 0,
+                NextRetryUtc TEXT NULL,
+                FOREIGN KEY (VesselId) REFERENCES vessels (Id) ON DELETE CASCADE
+            );
+
+            CREATE TABLE IF NOT EXISTS synchronization_logs (
+                Id TEXT NOT NULL PRIMARY KEY,
+                VesselId TEXT NOT NULL,
+                DateUtc TEXT NOT NULL,
+                Direction TEXT NOT NULL,
+                DurationMilliseconds INTEGER NOT NULL,
+                UploadedItems INTEGER NOT NULL,
+                DownloadedItems INTEGER NOT NULL,
+                Result TEXT NOT NULL,
+                ErrorMessage TEXT NULL,
+                EndpointHost TEXT NULL,
+                HttpStatus INTEGER NULL,
+                Phase TEXT NULL,
+                RejectedItems INTEGER NOT NULL DEFAULT 0,
+                FOREIGN KEY (VesselId) REFERENCES vessels (Id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_synchronization_logs_VesselId_DateUtc
+                ON synchronization_logs (VesselId, DateUtc);
+
+            CREATE TABLE IF NOT EXISTS synchronization_transfers (
+                Id TEXT NOT NULL PRIMARY KEY,
+                VesselId TEXT NOT NULL,
+                RelativePath TEXT NOT NULL,
+                Checksum TEXT NOT NULL,
+                TotalBytes INTEGER NOT NULL,
+                ReceivedBytes INTEGER NOT NULL,
+                TemporaryPath TEXT NOT NULL,
+                FileLastModifiedUtc TEXT NOT NULL,
+                UpdatedUtc TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS IX_synchronization_transfers_Vessel_Path_Checksum
+                ON synchronization_transfers (VesselId, RelativePath, Checksum);
+            """;
+
+        await db.Database.ExecuteSqlRawAsync(sql);
     }
 
     private static async Task AddColumnIfMissingAsync(
