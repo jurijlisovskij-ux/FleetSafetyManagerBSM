@@ -138,7 +138,7 @@ jobs:
         run: |
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
             /DMyEdition=Office `
-            /DOutputBase=FleetSafetyManager_RC20_Office_Setup `
+            /DOutputBase=FleetSafetyManager_Office_Setup `
             installer/FleetSafetyManager.iss
 
       - name: Build Ship installer
@@ -146,14 +146,14 @@ jobs:
         run: |
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
             /DMyEdition=Ship `
-            /DOutputBase=FleetSafetyManager_RC20_Ship_Setup `
+            /DOutputBase=FleetSafetyManager_Ship_Setup `
             installer/FleetSafetyManager.iss
 
       - name: Verify installer files
         shell: pwsh
         run: |
-          $office = "installer/output/FleetSafetyManager_RC20_Office_Setup.exe"
-          $ship = "installer/output/FleetSafetyManager_RC20_Ship_Setup.exe"
+          $office = "installer/output/FleetSafetyManager_Office_Setup.exe"
+          $ship = "installer/output/FleetSafetyManager_Ship_Setup.exe"
           if (-not (Test-Path $office)) { throw "Office installer is missing." }
           if (-not (Test-Path $ship)) { throw "Ship installer is missing." }
           Get-FileHash $office -Algorithm SHA256
@@ -163,6 +163,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: FleetSafetyManager-RC20-Windows-Installers
-          path: installer/output/*.exe
+          path: |
+            installer/output/FleetSafetyManager_Office_Setup.exe
+            installer/output/FleetSafetyManager_Ship_Setup.exe
           if-no-files-found: error
-          retention-days: 30
+          retention-days: 7
