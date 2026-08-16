@@ -405,6 +405,8 @@ function App() {
     useState(false);
   const [showAdvancedDiagnostics, setShowAdvancedDiagnostics] =
     useState(false);
+  const [showAdministration, setShowAdministration] =
+    useState(false);
   const [showMedicine, setShowMedicine] = useState(false);
   const [collapsed, setCollapsed] =
     useState<Set<Equipment["category"]>>(new Set());
@@ -573,7 +575,7 @@ function App() {
   return (
     <div className={`application ${user.edition === "Ship" ? "ship-edition" : "office-edition"}`}>
       <header className="topbar">
-        <div><strong>Fleet Safety Manager</strong><span>Version RC20</span></div>
+        <div><strong>Fleet Safety Manager</strong><span>Version RC30</span></div>
         <div className="session">
           <span>{user.fullName} · {user.role}</span>
           <button onClick={() => setShowSynchronization(true)}>
@@ -589,6 +591,10 @@ function App() {
               }}
             >
               Dashboard
+            </button>}
+          {user.role === "OfficeAdmin" &&
+            <button onClick={() => setShowAdministration(true)}>
+              Administration
             </button>}
           {user.role === "OfficeAdmin" &&
             <button
@@ -615,6 +621,7 @@ function App() {
             setShowCopyEquipment(false);
             setShowSynchronization(false);
             setShowAdvancedDiagnostics(false);
+            setShowAdministration(false);
           }}>Sign Out</button>
         </div>
       </header>
@@ -1232,8 +1239,143 @@ function App() {
           }}
         />}
 
+      {showAdministration && user.role === "OfficeAdmin" &&
+        <AdministrationDialog
+          token={user.token}
+          onClose={() => setShowAdministration(false)}
+          onSynchronizationDiagnostics={() => {
+            setShowAdministration(false);
+            setShowAdvancedDiagnostics(true);
+          }}
+        />}
+
     </div>
   );
+}
+
+type AdministrationOverview = {
+  applicationVersion: string;
+  edition: string;
+  environment: string;
+  machineName: string;
+  databasePath: string;
+  databaseSizeBytes: number;
+  databaseLastWriteUtc?: string;
+  lastAuditUtc?: string;
+  pendingRestore: boolean;
+  serverTimeUtc: string;
+};
+
+type AdministrationHealth = {
+  status: string;
+  database: string;
+  integrity: string;
+  documentsDirectory: boolean;
+  freeSpaceBytes: number;
+  checkedUtc: string;
+};
+
+function AdministrationDialog({ token, onClose, onSynchronizationDiagnostics }: {
+  token: string;
+  onClose: () => void;
+  onSynchronizationDiagnostics: () => void;
+}) {
+  const [tab, setTab] = useState<"settings" | "backup" | "health" | "audit" | "maintenance" | "diagnostics">("settings");
+  const [overview, setOverview] = useState<AdministrationOverview | null>(null);
+  const [health, setHealth] = useState<AdministrationHealth | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const [retentionDays, setRetentionDays] = useState(365);
+
+  async function load() {
+    const [overviewResponse, healthResponse] = await Promise.all([
+      authFetch(`${apiBaseUrl}/administration/overview`, token, { cache: "no-store" }),
+      authFetch(`${apiBaseUrl}/administration/health`, token, { cache: "no-store" }),
+    ]);
+    if (!overviewResponse.ok || !healthResponse.ok)
+      throw new Error("Unable to load administration status.");
+    setOverview(await overviewResponse.json());
+    setHealth(await healthResponse.json());
+  }
+
+  useEffect(() => { void load().catch(exception => setError((exception as Error).message)); }, []);
+
+  async function action(url: string, options?: RequestInit) {
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const response = await authFetch(`${apiBaseUrl}${url}`, token, options);
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.message ?? "Administration operation failed.");
+      setMessage(body?.message ?? "Operation completed.");
+      await load();
+    } catch (exception) { setError((exception as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function download(url: string, fallbackName: string) {
+    setBusy(true); setError("");
+    try {
+      const response = await authFetch(`${apiBaseUrl}${url}`, token);
+      if (!response.ok) throw new Error("Unable to create the requested export.");
+      const blob = await response.blob();
+      const disposition = response.headers.get("content-disposition") ?? "";
+      const fileName = /filename\*?=(?:UTF-8''|\")?([^\";]+)/i.exec(disposition)?.[1] ?? fallbackName;
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob); link.download = decodeURIComponent(fileName); link.click();
+      URL.revokeObjectURL(link.href);
+      setMessage("Export created successfully.");
+    } catch (exception) { setError((exception as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function stageRestore() {
+    if (!restoreFile) return;
+    const form = new FormData(); form.append("file", restoreFile);
+    await action("/administration/restore", { method: "POST", body: form });
+  }
+
+  const size = (bytes?: number) => bytes == null ? "—" : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  const tabs = [
+    ["settings", "Settings"], ["backup", "Backup / Restore"], ["health", "Health"],
+    ["audit", "Audit"], ["maintenance", "Maintenance"], ["diagnostics", "Diagnostics"],
+  ] as const;
+
+  return <div className="modal"><div className="administration-dialog">
+    <div className="service-request-header"><div><h2>Administration</h2><p>Deployment, backup and system maintenance</p></div><button onClick={onClose}>Close</button></div>
+    <div className="administration-tabs">{tabs.map(([key, label]) =>
+      <button key={key} className={tab === key ? "selected" : ""} onClick={() => setTab(key)}>{label}</button>)}</div>
+    {error && <div className="error">{error}</div>}{message && <div className="success-message">{message}</div>}
+    <div className="administration-content">
+      {tab === "settings" && <section><h3>Application Settings</h3><div className="administration-grid">
+        <div><span>Version</span><strong>{overview?.applicationVersion ?? "RC30"}</strong></div>
+        <div><span>Edition</span><strong>{overview?.edition ?? "—"}</strong></div>
+        <div><span>Environment</span><strong>{overview?.environment ?? "—"}</strong></div>
+        <div><span>Computer</span><strong>{overview?.machineName ?? "—"}</strong></div>
+      </div><p className="muted">Synchronization settings remain available from the Settings button in the main header.</p></section>}
+      {tab === "backup" && <section><h3>Backup / Restore</h3>
+        <p>Create a consistent database backup before updates or maintenance.</p>
+        <button className="primary" disabled={busy} onClick={() => download("/administration/backup", "FSM-Backup.db")}>Download Backup</button>
+        <hr/><label>Restore from an FSM database backup<input type="file" accept=".db,application/octet-stream" onChange={event => setRestoreFile(event.target.files?.[0] ?? null)}/></label>
+        <button disabled={busy || !restoreFile} onClick={stageRestore}>Validate and Stage Restore</button>
+        {overview?.pendingRestore && <div className="warning-box"><strong>Restore pending.</strong><p>Restart Fleet Safety Manager to apply it. The current database will be backed up automatically.</p><button onClick={() => action("/administration/restore/pending", { method: "DELETE" })}>Cancel Pending Restore</button></div>}
+      </section>}
+      {tab === "health" && <section><h3>System Health</h3><div className="administration-grid">
+        <div><span>Overall status</span><strong>{health?.status ?? "Checking…"}</strong></div>
+        <div><span>Database</span><strong>{health?.database ?? "—"}</strong></div>
+        <div><span>Integrity check</span><strong>{health?.integrity ?? "—"}</strong></div>
+        <div><span>Free disk space</span><strong>{size(health?.freeSpaceBytes)}</strong></div>
+        <div><span>Database size</span><strong>{size(overview?.databaseSizeBytes)}</strong></div>
+        <div><span>Documents directory</span><strong>{health?.documentsDirectory ? "Available" : "Not created yet"}</strong></div>
+      </div><button disabled={busy} onClick={() => load().catch(exception => setError((exception as Error).message))}>Refresh Health</button></section>}
+      {tab === "audit" && <section><h3>Audit</h3><p>Export the complete administrative audit log as CSV.</p><button className="primary" disabled={busy} onClick={() => download("/administration/audit/export", "FSM-Audit.csv")}>Export Audit CSV</button></section>}
+      {tab === "maintenance" && <section><h3>Maintenance</h3><button disabled={busy} onClick={() => action("/administration/maintenance/optimize", { method: "POST" })}>Optimize Database</button>
+        <label>Audit retention (days)<input type="number" min={30} max={3650} value={retentionDays} onChange={event => setRetentionDays(Number(event.target.value))}/></label>
+        <button disabled={busy} onClick={() => { if (window.confirm(`Remove audit records older than ${retentionDays} days?`)) void action(`/administration/maintenance/audit?retentionDays=${retentionDays}`, { method: "DELETE" }); }}>Remove Old Audit Records</button></section>}
+      {tab === "diagnostics" && <section><h3>Diagnostics</h3><p>Export a support package without passwords, tokens or database contents.</p><button className="primary" disabled={busy} onClick={() => download("/administration/diagnostics", "FSM-Diagnostics.zip")}>Export System Diagnostics</button><button disabled={busy} onClick={onSynchronizationDiagnostics}>Open Synchronization Diagnostics</button></section>}
+    </div>
+  </div></div>;
 }
 
 
@@ -2878,12 +3020,20 @@ function VesselProfileDialog({
       );
 
       if (!response.ok) {
-        const body =
-          await response.json().catch(() => null);
+        const responseText = await response.text();
+        let message = "";
+
+        if (responseText) {
+          try {
+            message = JSON.parse(responseText)?.message ?? "";
+          } catch {
+            message = responseText.trim();
+          }
+        }
 
         throw new Error(
-          body?.message ??
-          "Unable to save Vessel Profile.",
+          message ||
+          `Unable to save Vessel Profile (HTTP ${response.status}).`,
         );
       }
 
