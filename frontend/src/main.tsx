@@ -575,7 +575,7 @@ function App() {
   return (
     <div className={`application ${user.edition === "Ship" ? "ship-edition" : "office-edition"}`}>
       <header className="topbar">
-        <div><strong>Fleet Safety Manager</strong><span>Version RC30</span></div>
+        <div><strong>Fleet Safety Manager</strong><span>Version RC20</span></div>
         <div className="session">
           <span>{user.fullName} · {user.role}</span>
           <button onClick={() => setShowSynchronization(true)}>
@@ -1349,7 +1349,7 @@ function AdministrationDialog({ token, onClose, onSynchronizationDiagnostics }: 
     {error && <div className="error">{error}</div>}{message && <div className="success-message">{message}</div>}
     <div className="administration-content">
       {tab === "settings" && <section><h3>Application Settings</h3><div className="administration-grid">
-        <div><span>Version</span><strong>{overview?.applicationVersion ?? "RC30"}</strong></div>
+        <div><span>Version</span><strong>{overview?.applicationVersion ?? "RC20"}</strong></div>
         <div><span>Edition</span><strong>{overview?.edition ?? "—"}</strong></div>
         <div><span>Environment</span><strong>{overview?.environment ?? "—"}</strong></div>
         <div><span>Computer</span><strong>{overview?.machineName ?? "—"}</strong></div>
