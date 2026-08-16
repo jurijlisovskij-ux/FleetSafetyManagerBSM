@@ -231,7 +231,7 @@ begin
     if DirExists(OldReleasePath + '\' + FolderName) then
     begin
       if not Exec(ExpandConstant('{sys}\robocopy.exe'),
-        '"' + OldReleasePath + '\' + FolderName + '" "' + NewReleasePath + '\' + FolderName + '" /E /COPY:DAT /DCOPY:DAT /R:2 /W:1',
+        '"' + OldReleasePath + '\' + FolderName + '" "' + NewReleasePath + '\' + FolderName + '" /E /COPY:DT /DCOPY:DT /R:2 /W:1',
         '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode > 7) then
         RaiseException('Could not migrate ' + FolderName + ' from the previous release.');
     end;
