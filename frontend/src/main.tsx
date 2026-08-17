@@ -2783,9 +2783,20 @@ function CreateVesselDialog({
       );
 
       if (!response.ok) {
-        const body = await response.json().catch(() => null);
+        const responseText = await response.text();
+        let message = "";
+
+        if (responseText) {
+          try {
+            message = JSON.parse(responseText)?.message ?? "";
+          } catch {
+            message = responseText.trim();
+          }
+        }
+
         throw new Error(
-          body?.message ?? "Unable to create vessel.",
+          message ||
+          `Unable to create vessel (HTTP ${response.status}).`,
         );
       }
 
