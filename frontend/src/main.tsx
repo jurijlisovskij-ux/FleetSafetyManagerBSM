@@ -399,8 +399,6 @@ function App() {
     useState(false);
   const [showUserAdministration, setShowUserAdministration] =
     useState(false);
-  const [showCopyEquipment, setShowCopyEquipment] =
-    useState(false);
   const [showSynchronization, setShowSynchronization] =
     useState(false);
   const [showAdvancedDiagnostics, setShowAdvancedDiagnostics] =
@@ -618,7 +616,6 @@ function App() {
             setShowVesselProfile(false);
             setShowCreateVessel(false);
             setShowUserAdministration(false);
-            setShowCopyEquipment(false);
             setShowSynchronization(false);
             setShowAdvancedDiagnostics(false);
             setShowAdministration(false);
@@ -871,7 +868,6 @@ function App() {
             setShowAddEquipment(false);
             setShowVesselProfile(false);
             setShowUserAdministration(false);
-            setShowCopyEquipment(false);
                 }}
               >
                 ← Assigned Vessels
@@ -892,10 +888,6 @@ function App() {
               <button onClick={() => setShowMedicine(true)}>
                 Medicine Chest
               </button>
-              {user.role === "OfficeAdmin" &&
-                <button onClick={() => setShowCopyEquipment(true)}>
-                  Copy Equipment List
-                </button>}
               <button
                 className="primary"
                 onClick={() => setShowAddEquipment(true)}
@@ -1072,30 +1064,6 @@ function App() {
           vessel={currentVessel}
           onClose={() => setShowMedicine(false)}
         />}
-      {showCopyEquipment &&
-        currentVessel &&
-        user.role === "OfficeAdmin" &&
-        <CopyEquipmentDialog
-          token={user.token}
-          targetVessel={currentVessel}
-          vessels={vessels}
-          onClose={() => setShowCopyEquipment(false)}
-          onCompleted={async () => {
-            const response = await authFetch(
-              `${apiBaseUrl}/vessels/${currentVessel.id}/equipment`,
-              user.token,
-            );
-            if (!response.ok)
-              throw new Error("Unable to refresh equipment.");
-
-            const items: Equipment[] = await response.json();
-            setEquipment(items);
-            setSelected(items[0] ?? null);
-            setSelectedForRequest(new Set());
-            setShowCopyEquipment(false);
-          }}
-        />}
-
       {showUserAdministration &&
         user.role === "OfficeAdmin" &&
         <UserAdministrationDialog
@@ -1122,7 +1090,6 @@ function App() {
             setCurrentVessel(updated);
             setShowVesselProfile(false);
             setShowUserAdministration(false);
-            setShowCopyEquipment(false);
           }}
         />}
 
@@ -1150,7 +1117,6 @@ function App() {
             setShowAddEquipment(false);
             setShowVesselProfile(false);
             setShowUserAdministration(false);
-            setShowCopyEquipment(false);
           }}
         />}
 
@@ -1167,7 +1133,6 @@ function App() {
             setShowAddEquipment(false);
             setShowVesselProfile(false);
             setShowUserAdministration(false);
-            setShowCopyEquipment(false);
             setSelectedForRequest(new Set());
           }}
         />}
@@ -1186,7 +1151,6 @@ function App() {
             setShowAddEquipment(false);
             setShowVesselProfile(false);
             setShowUserAdministration(false);
-            setShowCopyEquipment(false);
             setSelectedForRequest(new Set());
           }}
         />}
@@ -1195,6 +1159,7 @@ function App() {
         user.role === "OfficeAdmin" &&
         <CreateVesselDialog
           token={user.token}
+          vessels={vessels}
           onClose={() => setShowCreateVessel(false)}
           onCreated={async () => {
             await refreshFleetData();
@@ -2068,203 +2033,6 @@ function SynchronizationDialog({
   );
 }
 
-type CopyMode = "AddOnlyNew" | "ReplaceExisting";
-
-function CopyEquipmentDialog({
-  token,
-  targetVessel,
-  vessels,
-  onClose,
-  onCompleted,
-}: {
-  token: string;
-  targetVessel: Vessel;
-  vessels: Vessel[];
-  onClose: () => void;
-  onCompleted: () => Promise<void>;
-}) {
-  const sourceOptions = vessels.filter(
-    vessel => vessel.id !== targetVessel.id,
-  );
-
-  const [sourceVesselId, setSourceVesselId] =
-    useState(sourceOptions[0]?.id ?? "");
-  const [mode, setMode] =
-    useState<CopyMode>("AddOnlyNew");
-  const [copyBusy, setCopyBusy] = useState(false);
-  const [copyError, setCopyError] = useState("");
-  const [copyResult, setCopyResult] = useState<{
-    sourceCount: number;
-    added: number;
-    skipped: number;
-    removed: number;
-  } | null>(null);
-
-  async function copyEquipment() {
-    if (!sourceVesselId) {
-      setCopyError("Select a source vessel.");
-      return;
-    }
-
-    const message =
-      mode === "ReplaceExisting"
-        ? "Delete all target equipment and documents, then copy the source list?"
-        : "Copy new equipment from the selected vessel?";
-
-    if (!window.confirm(message))
-      return;
-
-    setCopyBusy(true);
-    setCopyError("");
-
-    try {
-      const response = await authFetch(
-        `${apiBaseUrl}/vessels/${targetVessel.id}/copy-equipment`,
-        token,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sourceVesselId,
-            mode: mode === "AddOnlyNew" ? 0 : 1,
-          }),
-        },
-      );
-
-      if (!response.ok) {
-        const body = await response.json().catch(() => null);
-        throw new Error(body?.message ?? "Unable to copy equipment.");
-      }
-
-      setCopyResult(await response.json());
-    } catch (exception) {
-      setCopyError((exception as Error).message);
-    } finally {
-      setCopyBusy(false);
-    }
-  }
-
-  return (
-    <div className="modal">
-      <div className="copy-equipment-dialog">
-        <div className="service-request-header">
-          <div>
-            <h2>Copy Equipment List</h2>
-            <p>
-              Target: {targetVessel.vesselName}
-              {" · "}IMO {targetVessel.imoNumber}
-            </p>
-          </div>
-          <button type="button" onClick={onClose}>
-            Close
-          </button>
-        </div>
-
-        {copyError && <div className="error">{copyError}</div>}
-
-        {copyResult
-          ? (
-            <>
-              <div className="copy-result">
-                <h3>Equipment copied</h3>
-                <dl>
-                  <dt>Source positions</dt>
-                  <dd>{copyResult.sourceCount}</dd>
-                  <dt>Added</dt>
-                  <dd>{copyResult.added}</dd>
-                  <dt>Skipped</dt>
-                  <dd>{copyResult.skipped}</dd>
-                  <dt>Removed</dt>
-                  <dd>{copyResult.removed}</dd>
-                </dl>
-              </div>
-              <div className="service-request-actions">
-                <button className="primary" onClick={onCompleted}>
-                  Done
-                </button>
-              </div>
-            </>
-          )
-          : (
-            <>
-              {sourceOptions.length === 0
-                ? (
-                  <div className="empty-state">
-                    Add another vessel before copying.
-                  </div>
-                )
-                : (
-                  <div className="copy-equipment-form">
-                    <label>
-                      Source Vessel *
-                      <select
-                        value={sourceVesselId}
-                        onChange={event =>
-                          setSourceVesselId(event.target.value)}
-                      >
-                        {sourceOptions.map(vessel => (
-                          <option key={vessel.id} value={vessel.id}>
-                            {vessel.vesselName}
-                            {" · "}IMO {vessel.imoNumber}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <fieldset>
-                      <legend>Copy mode</legend>
-
-                      <label className="attachment-option">
-                        <input
-                          type="radio"
-                          name="copy-mode"
-                          checked={mode === "AddOnlyNew"}
-                          onChange={() => setMode("AddOnlyNew")}
-                        />
-                        Add only new equipment
-                      </label>
-
-                      <label className="attachment-option">
-                        <input
-                          type="radio"
-                          name="copy-mode"
-                          checked={mode === "ReplaceExisting"}
-                          onChange={() => setMode("ReplaceExisting")}
-                        />
-                        Replace existing list
-                      </label>
-                    </fieldset>
-
-                    <div className="copy-fields-note">
-                      <strong>Copied:</strong> Category, Equipment Name,
-                      Maker, Model and Inspection By.
-                      <br />
-                      <strong>Not copied:</strong> Quantity, Serial Number,
-                      Expiry Date, Remarks, Reports and Certificates.
-                    </div>
-                  </div>
-                )}
-
-              <div className="service-request-actions">
-                <button type="button" onClick={onClose}>
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="primary"
-                  disabled={copyBusy || sourceOptions.length === 0}
-                  onClick={copyEquipment}
-                >
-                  {copyBusy ? "Copying..." : "Copy Equipment"}
-                </button>
-              </div>
-            </>
-          )}
-      </div>
-    </div>
-  );
-}
-
 function UserAdministrationDialog({
   token,
   onClose,
@@ -2727,16 +2495,24 @@ function UserAdministrationDialog({
 
 function CreateVesselDialog({
   token,
+  vessels,
   onClose,
   onCreated,
 }: {
   token: string;
+  vessels: Vessel[];
   onClose: () => void;
   onCreated: (vessel: Vessel) => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [created, setCreated] = useState<Vessel | null>(null);
+  const [sourceVesselId, setSourceVesselId] = useState("");
+  const [copyResult, setCopyResult] = useState<{
+    sourceCount: number;
+    added: number;
+    skipped: number;
+  } | null>(null);
   const [draft, setDraft] = useState({
     vesselName: "",
     imoNumber: "",
@@ -2810,6 +2586,59 @@ function CreateVesselDialog({
     }
   }
 
+  const sourceOptions = vessels.filter(
+    vessel => vessel.id !== created?.id,
+  );
+
+  async function copyEquipment() {
+    if (!created || !sourceVesselId) {
+      setError("Select a source vessel.");
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/vessels/${created.id}/copy-equipment`,
+        token,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sourceVesselId,
+            mode: 0,
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        const responseText = await response.text();
+        let message = "";
+
+        if (responseText) {
+          try {
+            message = JSON.parse(responseText)?.message ?? "";
+          } catch {
+            message = responseText.trim();
+          }
+        }
+
+        throw new Error(
+          message ||
+          `Unable to copy equipment (HTTP ${response.status}).`,
+        );
+      }
+
+      setCopyResult(await response.json());
+    } catch (exception) {
+      setError((exception as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div className="modal">
       <div className="vessel-profile-dialog">
@@ -2826,18 +2655,76 @@ function CreateVesselDialog({
 
         {error && <div className="error">{error}</div>}
 
-        {created ? <div className="activation-code-panel">
-          <h3>Activation Code</h3>
-          <code>{created.activationCode}</code>
-          <button className="primary" onClick={() =>
-            navigator.clipboard.writeText(created.activationCode ?? "")}>
-            Copy
-          </button>
-          <p>This one-time code expires in 7 days.</p>
-          <div className="service-request-actions">
-            <button type="button" onClick={onClose}>Finish</button>
+        {created ? <>
+          <div className="activation-code-panel">
+            <h3>Activation Code</h3>
+            <code>{created.activationCode}</code>
+            <button className="primary" onClick={() =>
+              navigator.clipboard.writeText(created.activationCode ?? "")}>
+              Copy
+            </button>
+            <p>This one-time code expires in 7 days.</p>
           </div>
-        </div> : <>
+
+          <section className="copy-equipment-form">
+            <h3>Copy Equipment List</h3>
+            <p className="muted">
+              Optionally initialize the new vessel from an existing vessel.
+            </p>
+
+            {copyResult
+              ? <div className="notice">
+                  Equipment copied: {copyResult.added} added,
+                  {" "}{copyResult.skipped} skipped from
+                  {" "}{copyResult.sourceCount} source positions.
+                </div>
+              : sourceOptions.length === 0
+                ? <div className="empty-state">
+                    No other vessels are available as a source.
+                  </div>
+                : <>
+                    <label>
+                      Source Vessel *
+                      <select
+                        value={sourceVesselId}
+                        onChange={event =>
+                          setSourceVesselId(event.target.value)}
+                      >
+                        <option value="">Select vessel...</option>
+                        {sourceOptions.map(vessel => (
+                          <option key={vessel.id} value={vessel.id}>
+                            {vessel.vesselName}
+                            {" · "}IMO {vessel.imoNumber}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <div className="copy-fields-note">
+                      <strong>Copied:</strong> Category, Equipment Name,
+                      Maker, Model and Inspection By.
+                      <br />
+                      <strong>Not copied:</strong> Quantity, Serial Number,
+                      Expiry Date, Remarks, Reports and Certificates.
+                    </div>
+
+                    <button
+                      type="button"
+                      className="primary"
+                      disabled={busy || !sourceVesselId}
+                      onClick={copyEquipment}
+                    >
+                      {busy ? "Copying..." : "Copy Equipment"}
+                    </button>
+                  </>}
+          </section>
+
+          <div className="service-request-actions">
+            <button type="button" disabled={busy} onClick={onClose}>
+              Finish
+            </button>
+          </div>
+        </> : <>
 
         <div className="vessel-profile-form">
           <label>
