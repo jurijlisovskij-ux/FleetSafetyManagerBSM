@@ -35,6 +35,7 @@ var configuredConnection = builder.Configuration.GetConnectionString("DefaultCon
     ?? throw new InvalidOperationException("Default database connection is missing.");
 var resolvedConnection = DatabaseConnectionResolver.Resolve(
     configuredConnection, AppContext.BaseDirectory);
+ApplyPendingDatabaseRestore(resolvedConnection);
 builder.Services.AddDbContext<FsmDbContext>(options =>
     options.UseSqlite(resolvedConnection));
 
@@ -103,22 +104,55 @@ builder.Services
 
         options.Events = new JwtBearerEvents
         {
-            OnTokenValidated = context =>
+            OnTokenValidated = async context =>
             {
-                var role = context.Principal?.FindFirstValue(ClaimTypes.Role);
+                var userIdValue = context.Principal?
+                    .FindFirstValue(ClaimTypes.NameIdentifier);
+                if (!Guid.TryParse(userIdValue, out var userId))
+                {
+                    context.Fail("The authenticated user identifier is invalid.");
+                    return;
+                }
+
+                var db = context.HttpContext.RequestServices
+                    .GetRequiredService<FsmDbContext>();
+                var currentUser = await db.Users
+                    .AsNoTracking()
+                    .SingleOrDefaultAsync(x => x.Id == userId);
+                if (currentUser is null ||
+                    !currentUser.IsActive ||
+                    currentUser.IsLocked)
+                {
+                    context.Fail("The authenticated account is no longer active.");
+                    return;
+                }
+
+                if (context.Principal?.Identity is ClaimsIdentity identity)
+                {
+                    foreach (var claim in identity
+                        .FindAll(identity.RoleClaimType)
+                        .ToList())
+                    {
+                        identity.RemoveClaim(claim);
+                    }
+
+                    identity.AddClaim(new Claim(
+                        identity.RoleClaimType,
+                        currentUser.Role.ToString()));
+                }
+
                 var isShipEdition = applicationEdition.Equals(
                     "Ship",
                     StringComparison.OrdinalIgnoreCase);
                 var roleAllowed = isShipEdition
-                    ? role == "Crew"
-                    : role is "OfficeAdmin" or "Superintendent";
+                    ? currentUser.Role.ToString() == "Crew"
+                    : currentUser.Role.ToString() is
+                        "OfficeAdmin" or "Superintendent";
 
                 if (!roleAllowed)
                 {
                     context.Fail("The token role is not permitted for this application edition.");
                 }
-
-                return Task.CompletedTask;
             }
         };
     });
@@ -159,3 +193,21 @@ using (var scope = app.Services.CreateScope())
 }
 
 app.Run();
+
+static void ApplyPendingDatabaseRestore(string connectionString)
+{
+    var builder = new Microsoft.Data.Sqlite.SqliteConnectionStringBuilder(connectionString);
+    if (string.IsNullOrWhiteSpace(builder.DataSource) || builder.DataSource == ":memory:") return;
+    var databasePath = Path.GetFullPath(builder.DataSource);
+    var pendingPath = databasePath + ".restore-pending";
+    if (!File.Exists(pendingPath)) return;
+
+    Directory.CreateDirectory(Path.GetDirectoryName(databasePath)!);
+    if (File.Exists(databasePath))
+    {
+        var safetyBackup = databasePath + $".before-restore-{DateTime.UtcNow:yyyyMMdd-HHmmss}.bak";
+        File.Copy(databasePath, safetyBackup, overwrite: false);
+    }
+    File.Move(pendingPath, databasePath, overwrite: true);
+    Console.WriteLine("The staged Fleet Safety Manager database restore was applied.");
+}
