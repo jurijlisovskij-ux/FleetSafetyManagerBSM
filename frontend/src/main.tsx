@@ -4360,6 +4360,9 @@ function MedicineDialog({ token, vessel, onClose }: {
   const [items, setItems] = useState<MedicineItem[]>([]);
   const [configuration, setConfiguration] = useState({ categoryAEnabled: false, categoryBEnabled: false, dangerousGoodsEnabled: false, warningDays: 60 });
   const [message, setMessage] = useState("");
+  const [panel, setPanel] = useState<"register" | "add" | "settings" | "import">("register");
+  const [filter, setFilter] = useState<"All" | "A" | "B" | "Dangerous Goods" | "Missing" | "Expiring">("All");
+  const [search, setSearch] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<{ item: string; action: string }[]>([]);
   const [draft, setDraft] = useState({ itemName: "", formStrength: "", requiredQuantity: 0, actualQuantity: 0, unit: "", batchNumber: "", expiryDate: "", storageLocation: "", medicalCategory: "B", isDangerousGoods: false, replacementRequired: false, remarks: "" });
@@ -4377,9 +4380,13 @@ function MedicineDialog({ token, vessel, onClose }: {
   async function addItem() {
     const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine/items`, token, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...draft, isActive: true, isStandardTemplateItem: false, expiryDate: draft.expiryDate || null }) });
     if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.message || "Medicine item could not be added."); }
-    setDraft({ ...draft, itemName: "", formStrength: "", unit: "", batchNumber: "", expiryDate: "", remarks: "" }); await load();
+    setDraft({ ...draft, itemName: "", formStrength: "", unit: "", batchNumber: "", expiryDate: "", remarks: "" });
+    setPanel("register");
+    setMessage("Medicine item added.");
+    await load();
   }
   async function deactivate(item: MedicineItem) {
+    if (!window.confirm(`Remove ${item.itemName} from the active Medicine Chest list?`)) return;
     const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine/items/${item.id}`, token, { method: "DELETE" });
     if (!response.ok) throw new Error("Medicine item could not be removed."); await load();
   }
@@ -4391,29 +4398,75 @@ function MedicineDialog({ token, vessel, onClose }: {
     if (!file) return; const body = new FormData(); body.append("file", file);
     const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine/import?apply=${apply}&overwriteActual=false`, token, { method: "POST", body });
     const result = await response.json(); if (!response.ok) throw new Error(result.message || "Template validation failed.");
-    if (apply) { setPreview([]); setMessage(`${result.imported} template rows imported without overwriting onboard quantities.`); await load(); } else setPreview(result.preview);
+    if (apply) { setPreview([]); setPanel("register"); setMessage(`${result.imported} template rows imported without overwriting onboard quantities.`); await load(); } else setPreview(result.preview);
   }
   const act = (operation: () => Promise<void>) => operation().catch(e => setMessage(e.message));
-  return <div className="modal-backdrop"><div className="modal-card wide-modal">
+
+  const filteredItems = items.filter(item => {
+    const text = `${item.itemName} ${item.formStrength ?? ""} ${item.batchNumber ?? ""} ${item.storageLocation ?? ""}`.toLowerCase();
+    if (search.trim() && !text.includes(search.trim().toLowerCase())) return false;
+    if (filter === "A") return !item.isDangerousGoods && item.medicalCategory === "A";
+    if (filter === "B") return !item.isDangerousGoods && item.medicalCategory === "B";
+    if (filter === "Dangerous Goods") return item.isDangerousGoods;
+    if (filter === "Missing") return item.status === "Missing";
+    if (filter === "Expiring") return item.status === "Soon" || item.status.includes("Overdue") || item.status.includes("Expired");
+    return true;
+  });
+
+  const missingCount = items.filter(item => item.status === "Missing").length;
+  const attentionCount = items.filter(item => item.status === "Soon" || item.status.includes("Overdue") || item.status.includes("Expired")).length;
+
+  return <div className="modal-backdrop"><div className="modal-card wide-modal medicine-dialog">
     <div className="modal-header"><div><h2>Medicine Chest</h2><p>{vessel.vesselName} · IMO {vessel.imoNumber}</p></div><button onClick={onClose}>Close</button></div>
     {message && <div className="notice">{message}</div>}
-    <section><h3>Vessel configuration</h3><div className="form-grid">
+
+    <div className="medicine-summary">
+      <div><strong>{items.length}</strong><span>Active items</span></div>
+      <div className={missingCount ? "attention" : ""}><strong>{missingCount}</strong><span>Missing quantity</span></div>
+      <div className={attentionCount ? "attention" : ""}><strong>{attentionCount}</strong><span>Expiry attention</span></div>
+      <div><strong>{configuration.warningDays}</strong><span>Warning days</span></div>
+    </div>
+
+    <nav className="medicine-navigation" aria-label="Medicine Chest sections">
+      <button className={panel === "register" ? "selected" : ""} onClick={() => setPanel("register")}>Register</button>
+      <button className={panel === "add" ? "selected primary" : ""} onClick={() => setPanel("add")}>Add item</button>
+      <button className={panel === "settings" ? "selected" : ""} onClick={() => setPanel("settings")}>Settings</button>
+      <button className={panel === "import" ? "selected" : ""} onClick={() => setPanel("import")}>Import list</button>
+    </nav>
+
+    {panel === "register" && <section className="medicine-register">
+      <div className="medicine-toolbar">
+        <input aria-label="Search medicine" placeholder="Search medicine, batch or location..." value={search} onChange={e => setSearch(e.target.value)} />
+        <button onClick={() => act(() => download("export"))}>Export register</button>
+        <button className="primary" onClick={() => act(() => download("replenishment"))}>Replenishment XLSX</button>
+      </div>
+      <div className="medicine-filters">
+        {(["All", "A", "B", "Dangerous Goods", "Missing", "Expiring"] as const).map(value =>
+          <button key={value} className={filter === value ? "selected" : ""} onClick={() => setFilter(value)}>{value}</button>)}
+      </div>
+      {filteredItems.length === 0
+        ? <div className="empty-state">No medicine items match this view.</div>
+        : <div className="table-scroll"><table><thead><tr><th>Item</th><th>List</th><th>Required</th><th>Actual</th><th>Batch</th><th>Expiry</th><th>Status</th><th></th></tr></thead><tbody>{filteredItems.map(item => <tr key={item.id}><td><strong>{item.itemName}</strong><small>{item.formStrength}</small></td><td>{item.isDangerousGoods ? "Dangerous Goods" : `Category ${item.medicalCategory || "—"}`}</td><td>{item.requiredQuantity} {item.unit}</td><td>{item.actualQuantity} {item.unit}</td><td>{item.batchNumber || "—"}</td><td>{formatDate(item.expiryDate)}</td><td><span className={`status medicine-status-${item.status.toLowerCase().replace(/[^a-z]+/g, "-")}`}>{item.status}</span></td><td><button className="danger" onClick={() => act(() => deactivate(item))}>{item.isStandardTemplateItem ? "Deactivate" : "Remove"}</button></td></tr>)}</tbody></table></div>}
+    </section>}
+
+    {panel === "add" && <section><div className="section-heading"><div><h3>Add medicine or instrument</h3><p className="muted">Enter the onboard quantity, required quantity and expiry information.</p></div><button onClick={() => setPanel("register")}>Cancel</button></div><div className="form-grid">
+      <label>English item name *<input autoFocus value={draft.itemName} onChange={e => setDraft({ ...draft, itemName: e.target.value })} /></label><label>Form / strength<input value={draft.formStrength} onChange={e => setDraft({ ...draft, formStrength: e.target.value })} /></label>
+      <label>Unit *<input placeholder="pcs, packs, bottles..." value={draft.unit} onChange={e => setDraft({ ...draft, unit: e.target.value })} /></label><label>List<select value={draft.isDangerousGoods ? "DG" : draft.medicalCategory} onChange={e => setDraft({ ...draft, isDangerousGoods: e.target.value === "DG", medicalCategory: e.target.value === "DG" ? draft.medicalCategory : e.target.value })}><option value="A">Category A</option><option value="B">Category B</option><option value="DG">Dangerous Goods</option></select></label>
+      <label>Required quantity<input type="number" min="0" value={draft.requiredQuantity} onChange={e => setDraft({ ...draft, requiredQuantity: Number(e.target.value) })} /></label><label>Actual onboard quantity<input type="number" min="0" value={draft.actualQuantity} onChange={e => setDraft({ ...draft, actualQuantity: Number(e.target.value) })} /></label>
+      <label>Batch number<input value={draft.batchNumber} onChange={e => setDraft({ ...draft, batchNumber: e.target.value })} /></label><label>Expiry date<input type="date" value={draft.expiryDate} onChange={e => setDraft({ ...draft, expiryDate: e.target.value })} /></label>
+      <label>Storage location<input value={draft.storageLocation} onChange={e => setDraft({ ...draft, storageLocation: e.target.value })} /></label><label>Remarks<input value={draft.remarks} onChange={e => setDraft({ ...draft, remarks: e.target.value })} /></label>
+      <label><input type="checkbox" checked={draft.replacementRequired} onChange={e => setDraft({ ...draft, replacementRequired: e.target.checked })} /> Replacement required</label>
+    </div><div className="service-request-actions"><button onClick={() => setPanel("register")}>Cancel</button><button className="primary" disabled={!draft.itemName.trim() || !draft.unit.trim()} onClick={() => act(addItem)}>Save item</button></div></section>}
+
+    {panel === "settings" && <section><div className="section-heading"><div><h3>Vessel medicine requirements</h3><p className="muted">Select the lists applicable to this vessel.</p></div><button onClick={() => setPanel("register")}>Cancel</button></div><div className="medicine-settings">
       {(["categoryAEnabled", "categoryBEnabled", "dangerousGoodsEnabled"] as const).map((key) => <label key={key}><input type="checkbox" checked={configuration[key]} onChange={e => setConfiguration({ ...configuration, [key]: e.target.checked })} /> {key === "categoryAEnabled" ? "Category A" : key === "categoryBEnabled" ? "Category B" : "Dangerous Goods"}</label>)}
       <label>Expiry warning days<input type="number" min="0" max="730" value={configuration.warningDays} onChange={e => setConfiguration({ ...configuration, warningDays: Number(e.target.value) })} /></label>
-    </div><button onClick={() => act(() => saveConfiguration())}>Save configuration</button></section>
-    <section><h3>Add company-specific item</h3><div className="form-grid">
-      <label>English item name<input value={draft.itemName} onChange={e => setDraft({ ...draft, itemName: e.target.value })} /></label><label>Form / strength<input value={draft.formStrength} onChange={e => setDraft({ ...draft, formStrength: e.target.value })} /></label>
-      <label>Required quantity<input type="number" min="0" value={draft.requiredQuantity} onChange={e => setDraft({ ...draft, requiredQuantity: Number(e.target.value) })} /></label><label>Actual quantity<input type="number" min="0" value={draft.actualQuantity} onChange={e => setDraft({ ...draft, actualQuantity: Number(e.target.value) })} /></label>
-      <label>Unit<input value={draft.unit} onChange={e => setDraft({ ...draft, unit: e.target.value })} /></label><label>Batch number<input value={draft.batchNumber} onChange={e => setDraft({ ...draft, batchNumber: e.target.value })} /></label>
-      <label>Expiry date<input type="date" value={draft.expiryDate} onChange={e => setDraft({ ...draft, expiryDate: e.target.value })} /></label><label>Storage location<input value={draft.storageLocation} onChange={e => setDraft({ ...draft, storageLocation: e.target.value })} /></label>
-      <label>Category<select value={draft.medicalCategory} onChange={e => setDraft({ ...draft, medicalCategory: e.target.value })}><option>A</option><option>B</option></select></label><label><input type="checkbox" checked={draft.isDangerousGoods} onChange={e => setDraft({ ...draft, isDangerousGoods: e.target.checked })} /> Dangerous Goods list</label>
-      <label><input type="checkbox" checked={draft.replacementRequired} onChange={e => setDraft({ ...draft, replacementRequired: e.target.checked })} /> Replacement required</label><label>Remarks<input value={draft.remarks} onChange={e => setDraft({ ...draft, remarks: e.target.value })} /></label>
-    </div><button className="primary" disabled={!draft.itemName.trim() || !draft.unit.trim()} onClick={() => act(addItem)}>Add item</button></section>
-    <section><div className="workspace-actions"><h3>Register</h3><button onClick={() => act(() => download("export"))}>Export register</button><button onClick={() => act(() => download("replenishment"))}>Replenishment XLSX</button></div>
-      <div className="table-scroll"><table><thead><tr><th>Item</th><th>List</th><th>Required</th><th>Actual</th><th>Batch</th><th>Expiry</th><th>Status</th><th></th></tr></thead><tbody>{items.map(item => <tr key={item.id}><td>{item.itemName}<small>{item.formStrength}</small></td><td>{item.isDangerousGoods ? "Dangerous Goods" : `Category ${item.medicalCategory || "—"}`}</td><td>{item.requiredQuantity} {item.unit}</td><td>{item.actualQuantity} {item.unit}</td><td>{item.batchNumber || "—"}</td><td>{formatDate(item.expiryDate)}</td><td><span className={`status ${item.status.toLowerCase().replace(/ /g, "-")}`}>{item.status}</span></td><td><button onClick={() => act(() => deactivate(item))}>{item.isStandardTemplateItem ? "Deactivate" : "Remove"}</button></td></tr>)}</tbody></table></div>
-    </section>
-    <section><h3>Approved template import</h3><p className="muted">No regulatory list is bundled. Import an approved Excel or CSV template; preview is mandatory and actual quantities are preserved.</p><input type="file" accept=".xlsx,.csv" onChange={e => { setFile(e.target.files?.[0] || null); setPreview([]); }} /><button disabled={!file} onClick={() => act(() => importTemplate(false))}>Preview import</button>{preview.length > 0 && <><ul>{preview.map((x, i) => <li key={i}>{x.item}: {x.action}</li>)}</ul><button className="primary" onClick={() => act(() => importTemplate(true))}>Apply approved template</button></>}
-    </section>
+    </div><div className="service-request-actions"><button onClick={() => setPanel("register")}>Cancel</button><button className="primary" onClick={() => act(async () => { await saveConfiguration(); setPanel("register"); })}>Save settings</button></div></section>}
+
+    {panel === "import" && <section><div className="section-heading"><div><h3>Import approved list</h3><p className="muted">Upload an approved Excel or CSV template. Existing onboard quantities will not be overwritten.</p></div><button onClick={() => setPanel("register")}>Cancel</button></div><div className="medicine-import">
+      <input type="file" accept=".xlsx,.csv" onChange={e => { setFile(e.target.files?.[0] || null); setPreview([]); }} />
+      <button disabled={!file} onClick={() => act(() => importTemplate(false))}>Preview import</button>
+    </div>{preview.length > 0 && <div className="import-preview"><h4>Preview ({preview.length} rows)</h4><ul>{preview.map((x, i) => <li key={i}>{x.item}: {x.action}</li>)}</ul><button className="primary" onClick={() => act(() => importTemplate(true))}>Apply approved template</button></div>}</section>}
   </div></div>;
 }
 
