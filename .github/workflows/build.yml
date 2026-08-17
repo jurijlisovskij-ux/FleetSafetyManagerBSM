@@ -159,6 +159,58 @@ jobs:
           Get-FileHash $office -Algorithm SHA256
           Get-FileHash $ship -Algorithm SHA256
 
+      - name: Build account-free remote synchronization pilot
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $packageRoot = "pilot/output/FSM_Remote_Pilot"
+          $toolsRoot = "$packageRoot/RemotePilot"
+          New-Item -ItemType Directory -Path $toolsRoot -Force | Out-Null
+
+          $release = Invoke-RestMethod `
+            -Uri "https://api.github.com/repos/cloudflare/cloudflared/releases/latest" `
+            -Headers @{ "User-Agent" = "FleetSafetyManager-Build" }
+          $asset = $release.assets | Where-Object {
+            $_.name -eq "cloudflared-windows-amd64.exe"
+          } | Select-Object -First 1
+          if (-not $asset) {
+            throw "The official cloudflared Windows binary was not found."
+          }
+
+          $cloudflaredPath = "$toolsRoot/cloudflared.exe"
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $cloudflaredPath
+          if ($asset.digest -and $asset.digest -match '^sha256:(.+)$') {
+            $actualDigest = (Get-FileHash $cloudflaredPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualDigest -ne $Matches[1].ToLowerInvariant()) {
+              throw "The downloaded cloudflared checksum is invalid."
+            }
+          }
+
+          Copy-Item "pilot/*.ps1" $toolsRoot -Force
+          Copy-Item "pilot/*.cmd" $toolsRoot -Force
+          Copy-Item "pilot/README_RU.txt" $packageRoot -Force
+          Copy-Item "installer/output/FleetSafetyManager_Office_Setup.exe" $packageRoot -Force
+          Copy-Item "installer/output/FleetSafetyManager_Ship_Setup.exe" $packageRoot -Force
+
+          @(
+            "$toolsRoot/Start-FSM-Remote-Pilot.ps1",
+            "$toolsRoot/Connect-FSM-Ship-Pilot.ps1",
+            "$toolsRoot/Stop-FSM-Remote-Pilot.ps1",
+            "$toolsRoot/cloudflared.exe",
+            "$packageRoot/FleetSafetyManager_Office_Setup.exe",
+            "$packageRoot/FleetSafetyManager_Ship_Setup.exe"
+          ) | ForEach-Object {
+            if (-not (Test-Path $_)) { throw "Remote Pilot package is incomplete: $_" }
+          }
+
+          $startScript = Get-Content "$toolsRoot/Start-FSM-Remote-Pilot.ps1" -Raw
+          $shipScript = Get-Content "$toolsRoot/Connect-FSM-Ship-Pilot.ps1" -Raw
+          if ($startScript -notmatch 'trycloudflare\\.com' -or
+              $shipScript -notmatch 'OfficeBaseUrl' -or
+              $shipScript -notmatch 'AllowInsecureHttp') {
+            throw "Remote Pilot zero-configuration scripts failed validation."
+          }
+
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
@@ -166,5 +218,13 @@ jobs:
           path: |
             installer/output/FleetSafetyManager_Office_Setup.exe
             installer/output/FleetSafetyManager_Ship_Setup.exe
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload account-free remote pilot
+        uses: actions/upload-artifact@v4
+        with:
+          name: FleetSafetyManager-RC20-Remote-Pilot
+          path: pilot/output/FSM_Remote_Pilot
           if-no-files-found: error
           retention-days: 7
