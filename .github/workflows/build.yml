@@ -214,7 +214,7 @@ jobs:
               $shipScript -notmatch 'OfficeBaseUrl' -or
               $shipScript -notmatch 'AllowInsecureHttp' -or
               $installScript -notmatch 'activation' -or
-              $installScript -notmatch 'Install FSM Ship\\.exe') {
+              -not $installScript.Contains('Install FSM Ship.exe')) {
             throw "Remote Pilot zero-configuration scripts failed validation."
           }
 
