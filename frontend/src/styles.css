@@ -595,6 +595,23 @@ button:disabled {
   margin: 20px 0;
 }
 
+.dashboard-cards.ship-dashboard-cards {
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+}
+
+.ship-dashboard-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.ship-dashboard-actions button {
+  min-height: 48px;
+  padding: 12px 20px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
 .dashboard-card {
   min-height: 96px;
   padding: 15px;

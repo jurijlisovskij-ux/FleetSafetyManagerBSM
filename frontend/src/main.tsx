@@ -492,6 +492,9 @@ function App() {
   const singleVesselDashboard =
     (dashboard?.vesselRows.length ?? 0) === 1;
   const showUpcomingVesselColumn = user?.role === "OfficeAdmin";
+  const shipDashboardVessel = user?.edition === "Ship"
+    ? vessels[0] ?? null
+    : null;
 
   if (!activationState) {
     return <div className="login-page"><div className="card"><h1>Fleet Safety Manager</h1><p>Starting...</p>{error && <div className="error">{error}</div>}</div></div>;
@@ -627,8 +630,17 @@ function App() {
         <main className="dashboard-page">
           <div className="dashboard-heading">
             <div>
-              <h1>Dashboard</h1>
-              <p className="muted">Fleet equipment status.</p>
+              <h1>
+                Dashboard
+                {shipDashboardVessel
+                  ? ` — ${shipDashboardVessel.vesselName}`
+                  : ""}
+              </h1>
+              <p className="muted">
+                {user.edition === "Ship"
+                  ? "Vessel equipment status."
+                  : "Fleet equipment status."}
+              </p>
             </div>
             {user.role === "OfficeAdmin" &&
               <button
@@ -641,11 +653,12 @@ function App() {
 
           {error && <div className="error">{error}</div>}
 
-          <div className="dashboard-cards">
-            <button className="dashboard-card" onClick={() => setDashboardFilter("All")}>
-              <span>Vessels</span>
-              <strong>{dashboard?.vessels ?? vessels.length}</strong>
-            </button>
+          <div className={`dashboard-cards ${user.edition === "Ship" ? "ship-dashboard-cards" : ""}`}>
+            {user.edition !== "Ship" &&
+              <button className="dashboard-card" onClick={() => setDashboardFilter("All")}>
+                <span>Vessels</span>
+                <strong>{dashboard?.vessels ?? vessels.length}</strong>
+              </button>}
             <button className="dashboard-card" onClick={() => setDashboardFilter("All")}>
               <span>Equipment</span>
               <strong>{dashboard?.equipment ?? 0}</strong>
@@ -666,8 +679,34 @@ function App() {
 
           <section className="dashboard-section">
             <div className="dashboard-section-heading">
-              <h2>Fleet Status</h2>
-              <span className="muted">Click a vessel to open it.</span>
+              {user.edition === "Ship" ?
+                <div className="ship-dashboard-actions">
+                  <button
+                    className="primary"
+                    disabled={!shipDashboardVessel}
+                    onClick={() => {
+                      if (shipDashboardVessel)
+                        setCurrentVessel(shipDashboardVessel);
+                    }}
+                  >
+                    Vessel Equipment Status
+                  </button>
+                  <button
+                    className="primary"
+                    disabled={!shipDashboardVessel}
+                    onClick={() => {
+                      if (!shipDashboardVessel) return;
+                      setCurrentVessel(shipDashboardVessel);
+                      setShowAddEquipment(true);
+                    }}
+                  >
+                    Add Equipment
+                  </button>
+                </div>
+              : <>
+                  <h2>Fleet Status</h2>
+                  <span className="muted">Click a vessel to open it.</span>
+                </>}
             </div>
 
             {(dashboard?.vesselRows.length ?? 0) === 0
@@ -870,7 +909,7 @@ function App() {
             setShowUserAdministration(false);
                 }}
               >
-                ← Assigned Vessels
+                ← {user.edition === "Ship" ? "Dashboard" : "Assigned Vessels"}
               </button>
               <h1>{currentVessel.vesselName}</h1>
               <p className="muted">
