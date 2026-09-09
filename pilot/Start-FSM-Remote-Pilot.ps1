@@ -7,7 +7,6 @@ $cloudflared = Join-Path $pilotRoot "cloudflared.exe"
 $stateRoot = Join-Path $env:LOCALAPPDATA "FleetSafetyManager\RemotePilot"
 $logPath = Join-Path $stateRoot "cloudflared.log"
 $pidPath = Join-Path $stateRoot "cloudflared.pid"
-$shipPackage = Join-Path ([Environment]::GetFolderPath("Desktop")) "FSM_Ship_Pilot_Connection"
 
 function Stop-PreviousTunnel {
     if (-not (Test-Path $pidPath)) { return }
@@ -18,21 +17,44 @@ function Stop-PreviousTunnel {
     Remove-Item $pidPath -Force -ErrorAction SilentlyContinue
 }
 
-function Test-OfficeService {
+function Get-OfficeCatalog {
     try {
-        $catalog = Invoke-RestMethod `
+        return Invoke-RestMethod `
             -Uri "http://127.0.0.1:8080/api/synchronization/activation/catalog" `
             -TimeoutSec 10
-        return $null -ne $catalog
     }
-    catch { return $false }
+    catch { return $null }
 }
 
 if (-not (Test-Path $cloudflared)) {
     throw "cloudflared.exe is missing. Extract the complete Remote Pilot package before starting it."
 }
-if (-not (Test-OfficeService)) {
+$catalog = Get-OfficeCatalog
+if ($null -eq $catalog) {
     throw "Fleet Safety Manager Office is not running on this PC. Install and start Office Setup first."
+}
+
+$vessels = @($catalog.vessels)
+if ($vessels.Count -eq 0) {
+    throw "No vessels are available in Fleet Safety Manager Office."
+}
+
+Write-Host ""
+Write-Host "Select the vessel for this Ship installer:" -ForegroundColor Cyan
+for ($index = 0; $index -lt $vessels.Count; $index++) {
+    Write-Host ("{0}. {1} (IMO {2})" -f ($index + 1), $vessels[$index].vesselName, $vessels[$index].imoNumber)
+}
+
+if ($vessels.Count -eq 1) {
+    $selectedVessel = $vessels[0]
+} else {
+    $selectedNumber = 0
+    do {
+        $selection = Read-Host "Enter vessel number"
+        $validSelection = [int]::TryParse($selection, [ref]$selectedNumber) -and
+            $selectedNumber -ge 1 -and $selectedNumber -le $vessels.Count
+    } while (-not $validSelection)
+    $selectedVessel = $vessels[$selectedNumber - 1]
 }
 
 New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
@@ -69,16 +91,31 @@ if (-not $publicUrl) {
 }
 
 $encodedUrl = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($publicUrl))
+$activation = Invoke-RestMethod -Method Post `
+    -Uri ("http://127.0.0.1:8080/api/synchronization/activation/pilot-code/{0}" -f $selectedVessel.vesselId) `
+    -TimeoutSec 10
+$encodedActivationCode = [Convert]::ToBase64String(
+    [Text.Encoding]::UTF8.GetBytes($activation.activationCode))
+$safeVesselName = ($selectedVessel.vesselName -replace '[^A-Za-z0-9_-]', '_').Trim('_')
+if ([string]::IsNullOrWhiteSpace($safeVesselName)) { $safeVesselName = "Vessel" }
+$shipPackage = Join-Path ([Environment]::GetFolderPath("Desktop")) ("FSM_Ship_{0}_Pilot" -f $safeVesselName)
 New-Item -ItemType Directory -Path $shipPackage -Force | Out-Null
-Copy-Item (Join-Path $pilotRoot "Connect-FSM-Ship-Pilot.ps1") $shipPackage -Force
+Copy-Item (Join-Path $pilotRoot "Install-FSM-Ship-Pilot.ps1") $shipPackage -Force
+$packageRoot = Split-Path -Parent $pilotRoot
+$shipInstaller = Get-ChildItem -Path $packageRoot -Filter "FleetSafetyManager_Ship_Setup_Build*.exe" |
+    Sort-Object LastWriteTime -Descending | Select-Object -First 1
+if (-not $shipInstaller) {
+    throw "The Build-numbered Ship installer is missing from the Remote Pilot package."
+}
+Copy-Item $shipInstaller.FullName (Join-Path $shipPackage "Install FSM Ship.exe") -Force
 
 $launcher = @"
 @echo off
 setlocal
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Connect-FSM-Ship-Pilot.ps1" -EncodedOfficeUrl "$encodedUrl"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "%~dp0Install-FSM-Ship-Pilot.ps1" -EncodedOfficeUrl "$encodedUrl" -VesselId "$($selectedVessel.vesselId)" -EncodedActivationCode "$encodedActivationCode"
 if errorlevel 1 pause
 "@
-Set-Content -Path (Join-Path $shipPackage "Connect Ship to FSM Pilot.cmd") `
+Set-Content -Path (Join-Path $shipPackage "Install FSM Ship Pilot.cmd") `
     -Value $launcher -Encoding ASCII
 Set-Content -Path (Join-Path $shipPackage "TEMPORARY_ADDRESS.txt") `
     -Value $publicUrl -Encoding UTF8
@@ -86,10 +123,14 @@ Set-Content -Path (Join-Path $shipPackage "TEMPORARY_ADDRESS.txt") `
 $instructions = @"
 FSM REMOTE PILOT
 
+Vessel: $($selectedVessel.vesselName)
+IMO: $($selectedVessel.imoNumber)
+
 1. Copy this entire folder to the remote Ship PC.
-2. Install FleetSafetyManager_Ship_Setup.exe on that PC.
-3. Right-click "Connect Ship to FSM Pilot.cmd" and select "Run as administrator".
-4. Open Fleet Safety Manager Ship and complete vessel activation.
+2. Double-click "Install FSM Ship Pilot.cmd".
+3. Approve the Windows administrator prompt.
+
+Installation, activation and first synchronization are automatic.
 
 Do not close or switch off the Office PC during the test.
 The temporary address stops working when this tunnel is stopped.
@@ -100,8 +141,8 @@ Set-Content -Path (Join-Path $shipPackage "HOW_TO_CONNECT_SHIP.txt") `
 Write-Host ""
 Write-Host "FSM Remote Pilot is ready." -ForegroundColor Green
 Write-Host "Temporary address: $publicUrl"
+Write-Host "Vessel: $($selectedVessel.vesselName) (IMO $($selectedVessel.imoNumber))"
 Write-Host "Ship connection folder: $shipPackage"
 Write-Host ""
 Write-Host "Keep this Office PC switched on during the test."
 Write-Host "Use Stop-FSM-Remote-Pilot.cmd when the test is finished."
-

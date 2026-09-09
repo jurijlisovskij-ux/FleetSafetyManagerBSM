@@ -238,6 +238,21 @@ begin
   end;
 end;
 
+procedure CopyPersistentConfiguration(const OldReleasePath, NewReleasePath: string);
+var
+  OldConfigPath: string;
+  NewConfigPath: string;
+begin
+  if (OldReleasePath = '') or (CompareText(OldReleasePath, NewReleasePath) = 0) then
+    exit;
+
+  OldConfigPath := OldReleasePath + '\appsettings.json';
+  NewConfigPath := NewReleasePath + '\appsettings.json';
+  if FileExists(OldConfigPath) and
+     (not FileCopy(OldConfigPath, NewConfigPath, False)) then
+    RaiseException('Could not preserve the existing FSM connection configuration.');
+end;
+
 procedure VerifyRelease(const ReleasePath: string);
 begin
   if not FileExists(ReleasePath + '\FSM.Api.exe') then
@@ -382,6 +397,7 @@ begin
   begin
     NewReleasePath := ExpandConstant('{app}\Releases\{#ReleaseName}');
     OldReleasePath := PersistentDataSource;
+    CopyPersistentConfiguration(OldReleasePath, NewReleasePath);
     UpdateEditionConfiguration;
     VerifyRelease(NewReleasePath);
     CopyPersistentData(OldReleasePath, NewReleasePath);

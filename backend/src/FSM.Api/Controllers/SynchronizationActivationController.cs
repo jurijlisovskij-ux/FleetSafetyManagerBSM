@@ -1,4 +1,5 @@
 using System.Data;
+using System.Net;
 using System.Net.Http.Json;
 using FSM.Api.Synchronization;
 using FSM.Domain.Entities;
@@ -166,6 +167,36 @@ public sealed class SynchronizationActivationController(
             setting.SynchronizationIdentity,
             tokens.GetOutboundToken(setting),
             24));
+    }
+
+    [AllowAnonymous]
+    [HttpPost("pilot-code/{vesselId:guid}")]
+    public async Task<IActionResult> GenerateLocalPilotCode(
+        Guid vesselId,
+        CancellationToken cancellationToken)
+    {
+        if (!IsOffice())
+            return NotFound();
+
+        var remoteAddress = HttpContext.Connection.RemoteIpAddress;
+        if (remoteAddress is null || !IPAddress.IsLoopback(remoteAddress))
+            return NotFound();
+
+        try
+        {
+            var code = await provisioning.RegenerateActivationCodeAsync(
+                vesselId,
+                cancellationToken);
+            return Ok(new
+            {
+                activationCode = code,
+                expiresUtc = DateTime.UtcNow.AddDays(7)
+            });
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
     }
 
     [AllowAnonymous]
