@@ -53,6 +53,7 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           Set-Location frontend
+          $env:VITE_BUILD_NUMBER = "${{ github.run_number }}"
           npm ci
           npm run build
           Set-Location ..
@@ -138,7 +139,8 @@ jobs:
         run: |
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
             /DMyEdition=Office `
-            /DOutputBase=FleetSafetyManager_Office_Setup `
+            /DMyBuild=${{ github.run_number }} `
+            /DOutputBase=FleetSafetyManager_Office_Setup_Build${{ github.run_number }} `
             installer/FleetSafetyManager.iss
 
       - name: Build Ship installer
@@ -146,14 +148,15 @@ jobs:
         run: |
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
             /DMyEdition=Ship `
-            /DOutputBase=FleetSafetyManager_Ship_Setup `
+            /DMyBuild=${{ github.run_number }} `
+            /DOutputBase=FleetSafetyManager_Ship_Setup_Build${{ github.run_number }} `
             installer/FleetSafetyManager.iss
 
       - name: Verify installer files
         shell: pwsh
         run: |
-          $office = "installer/output/FleetSafetyManager_Office_Setup.exe"
-          $ship = "installer/output/FleetSafetyManager_Ship_Setup.exe"
+          $office = "installer/output/FleetSafetyManager_Office_Setup_Build${{ github.run_number }}.exe"
+          $ship = "installer/output/FleetSafetyManager_Ship_Setup_Build${{ github.run_number }}.exe"
           if (-not (Test-Path $office)) { throw "Office installer is missing." }
           if (-not (Test-Path $ship)) { throw "Ship installer is missing." }
           Get-FileHash $office -Algorithm SHA256
@@ -189,8 +192,8 @@ jobs:
           Copy-Item "pilot/*.ps1" $toolsRoot -Force
           Copy-Item "pilot/*.cmd" $toolsRoot -Force
           Copy-Item "pilot/README_RU.txt" $packageRoot -Force
-          Copy-Item "installer/output/FleetSafetyManager_Office_Setup.exe" $packageRoot -Force
-          Copy-Item "installer/output/FleetSafetyManager_Ship_Setup.exe" $packageRoot -Force
+          Copy-Item "installer/output/FleetSafetyManager_Office_Setup_Build${{ github.run_number }}.exe" $packageRoot -Force
+          Copy-Item "installer/output/FleetSafetyManager_Ship_Setup_Build${{ github.run_number }}.exe" $packageRoot -Force
 
           @(
             "$toolsRoot/Start-FSM-Remote-Pilot.ps1",
@@ -214,17 +217,17 @@ jobs:
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
-          name: FleetSafetyManager-RC20-Windows-Installers
+          name: FleetSafetyManager-RC20-Build${{ github.run_number }}-Windows-Installers
           path: |
-            installer/output/FleetSafetyManager_Office_Setup.exe
-            installer/output/FleetSafetyManager_Ship_Setup.exe
+            installer/output/FleetSafetyManager_Office_Setup_Build${{ github.run_number }}.exe
+            installer/output/FleetSafetyManager_Ship_Setup_Build${{ github.run_number }}.exe
           if-no-files-found: error
           retention-days: 7
 
       - name: Upload account-free remote pilot
         uses: actions/upload-artifact@v4
         with:
-          name: FleetSafetyManager-RC20-Remote-Pilot
+          name: FleetSafetyManager-RC20-Build${{ github.run_number }}-Remote-Pilot
           path: pilot/output/FSM_Remote_Pilot
           if-no-files-found: error
           retention-days: 7

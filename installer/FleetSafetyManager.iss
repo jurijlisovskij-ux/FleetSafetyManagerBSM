@@ -11,7 +11,7 @@
 #endif
 
 #define AppName "Fleet Safety Manager"
-#define AppVersion "1.0.0-RC20"
+#define AppVersion "1.0.0-RC20." + MyBuild
 #define ServiceName "FleetSafetyManager"
 #define AppUrl "http://127.0.0.1:8080/"
 #define ReleaseName "RC20_" + MyBuild

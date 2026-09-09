@@ -4,6 +4,8 @@ import "./styles.css";
 
 const apiBaseUrl =
   import.meta.env.VITE_API_BASE_URL ?? "/api";
+const buildNumber =
+  import.meta.env.VITE_BUILD_NUMBER ?? "local";
 
 type LoginResult = {
   token: string;
@@ -576,7 +578,7 @@ function App() {
   return (
     <div className={`application ${user.edition === "Ship" ? "ship-edition" : "office-edition"}`}>
       <header className="topbar">
-        <div><strong>Fleet Safety Manager</strong><span>Version RC20</span></div>
+        <div><strong>Fleet Safety Manager</strong><span>Version RC20 · Build {buildNumber}</span></div>
         <div className="session">
           <span>{user.fullName} · {user.role}</span>
           <button onClick={() => setShowSynchronization(true)}>
