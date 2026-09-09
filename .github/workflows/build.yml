@@ -200,8 +200,8 @@ jobs:
             "$toolsRoot/Connect-FSM-Ship-Pilot.ps1",
             "$toolsRoot/Stop-FSM-Remote-Pilot.ps1",
             "$toolsRoot/cloudflared.exe",
-            "$packageRoot/FleetSafetyManager_Office_Setup.exe",
-            "$packageRoot/FleetSafetyManager_Ship_Setup.exe"
+            "$packageRoot/FleetSafetyManager_Office_Setup_Build${{ github.run_number }}.exe",
+            "$packageRoot/FleetSafetyManager_Ship_Setup_Build${{ github.run_number }}.exe"
           ) | ForEach-Object {
             if (-not (Test-Path $_)) { throw "Remote Pilot package is incomplete: $_" }
           }
