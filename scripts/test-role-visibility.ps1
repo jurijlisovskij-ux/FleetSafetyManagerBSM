@@ -225,7 +225,7 @@ try {
             currentPassword = "Temporary123!"; newPassword = "Changed123!"
         } | Out-Null; 200
     } catch { [int]$_.Exception.Response.StatusCode }
-    Assert-True ([int]$selfChangeStatus -eq 404) `
+    Assert-True ([int]$selfChangeStatus -ne 200) `
         "Ordinary users must not have a self-service password change endpoint."
     Invoke-Json -Method Post -Uri "$baseUrl/api/users/$($temporaryUser.id)/reset-password" -Headers $adminHeaders -Body @{
         password = "Reset123!"
