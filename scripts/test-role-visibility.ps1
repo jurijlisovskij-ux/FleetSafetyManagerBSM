@@ -217,22 +217,24 @@ try {
     $temporaryLogin = Invoke-Json -Method Post -Uri "$baseUrl/api/auth/login" -Body @{
         email = "temporary@fsm.local"; password = "Temporary123!"
     }
-    Assert-True $temporaryLogin.forcePasswordChange "Temporary password must force a password change."
+    Assert-True (-not $temporaryLogin.forcePasswordChange) `
+        "Passwords assigned by OfficeAdmin must not be temporary."
     $temporaryHeaders = @{ Authorization = "Bearer $($temporaryLogin.token)" }
-    Invoke-Json -Method Post -Uri "$baseUrl/api/auth/change-password" -Headers $temporaryHeaders -Body @{
-        currentPassword = "Temporary123!"; newPassword = "Changed123!"
-    } | Out-Null
-    $changedLogin = Invoke-Json -Method Post -Uri "$baseUrl/api/auth/login" -Body @{
-        email = "temporary@fsm.local"; password = "Changed123!"
-    }
-    Assert-True (-not $changedLogin.forcePasswordChange) "Changed password must clear the temporary-password flag."
+    $selfChangeStatus = try {
+        Invoke-Json -Method Post -Uri "$baseUrl/api/auth/change-password" -Headers $temporaryHeaders -Body @{
+            currentPassword = "Temporary123!"; newPassword = "Changed123!"
+        } | Out-Null; 200
+    } catch { [int]$_.Exception.Response.StatusCode }
+    Assert-True ([int]$selfChangeStatus -eq 404) `
+        "Ordinary users must not have a self-service password change endpoint."
     Invoke-Json -Method Post -Uri "$baseUrl/api/users/$($temporaryUser.id)/reset-password" -Headers $adminHeaders -Body @{
-        password = "Reset123!"; temporaryPassword = $true
+        password = "Reset123!"
     } | Out-Null
     $resetLogin = Invoke-Json -Method Post -Uri "$baseUrl/api/auth/login" -Body @{
         email = "temporary@fsm.local"; password = "Reset123!"
     }
-    Assert-True $resetLogin.forcePasswordChange "Administrator reset must support temporary passwords."
+    Assert-True (-not $resetLogin.forcePasswordChange) `
+        "Administrator-assigned passwords must be immediately final."
     for ($attempt = 1; $attempt -le 5; $attempt++) {
         try { Invoke-Json -Method Post -Uri "$baseUrl/api/auth/login" -Body @{
             email = "temporary@fsm.local"; password = "Wrong123!"
@@ -248,7 +250,8 @@ try {
     $unlockedLogin = Invoke-Json -Method Post -Uri "$baseUrl/api/auth/login" -Body @{
         email = "temporary@fsm.local"; password = "Reset123!"
     }
-    Assert-True $unlockedLogin.forcePasswordChange "Unlocked user must retain temporary-password state."
+    Assert-True (-not $unlockedLogin.forcePasswordChange) `
+        "Unlocking must not enable self-service password changes."
     Invoke-Json -Method Put -Uri "$baseUrl/api/users/$($temporaryUser.id)" -Headers $adminHeaders -Body @{
         fullName = "Temporary Superintendent"; email = "temporary@fsm.local"; role = 1
         isActive = $false; password = $null; vesselIds = @(); forcePasswordChange = $true
@@ -260,19 +263,13 @@ try {
     } catch { [int]$_.Exception.Response.StatusCode }
     Assert-True ([int]$disabledStatus -eq 401) "Disabled user must not sign in."
 
-    $oldKey = Join-Path $testRoot "old.fsmkey"
-    $newKey = Join-Path $testRoot "new.fsmkey"
-    Invoke-WebRequest -Uri "$baseUrl/api/auth/recovery-key" -Headers $adminHeaders -OutFile $oldKey -UseBasicParsing
-    Invoke-WebRequest -Method Post -Uri "$baseUrl/api/auth/recovery-key/rotate" -Headers $adminHeaders -OutFile $newKey -UseBasicParsing
-    $oldKeyStatus = & curl.exe -s -o NUL -w "%{http_code}" `
-        -F "recoveryFile=@$oldKey" -F "newPassword=Rejected123!" `
-        "$baseUrl/api/auth/emergency-recovery"
-    Assert-True ([int]$oldKeyStatus -eq 401) "Rotated recovery key must invalidate the old key (received $oldKeyStatus)."
-    $adminPassword = "Recovered123!"
-    $newKeyStatus = & curl.exe -s -o NUL -w "%{http_code}" `
-        -F "recoveryFile=@$newKey" -F "newPassword=$adminPassword" `
-        "$baseUrl/api/auth/emergency-recovery"
-    Assert-True ([int]$newKeyStatus -eq 200) "Active recovery key must reset OfficeAdmin password."
+    $recoveryStatus = try {
+        Invoke-Json -Method Post -Uri "$baseUrl/api/auth/administrator-recovery/request" -Body @{
+            email = "admin@fsm.local"
+        } | Out-Null; 200
+    } catch { [int]$_.Exception.Response.StatusCode }
+    Assert-True ([int]$recoveryStatus -eq 503) `
+        "Email recovery must clearly require SMTP configuration."
 
     $balticVessel = Invoke-Json `
         -Method Post `
