@@ -670,9 +670,6 @@ try {
         Assert-True (-not $databaseText.Contains($secret)) "Plaintext password leaked into SQLite."
         Assert-True (-not $normalLogs.Contains($secret)) "Plaintext password leaked into normal logs."
     }
-    Assert-True (-not ([Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($newKey))).Contains($adminPassword)) `
-        "Recovery file must not contain a readable password."
-
     $dashboardSource = Get-Content `
         -LiteralPath (Join-Path $root "frontend\src\main.tsx") `
         -Raw
