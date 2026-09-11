@@ -159,7 +159,7 @@ public sealed class AuthController(
             return Unauthorized(new { message = "The verification code is invalid or expired." });
         }
 
-        admin.PasswordHash = PasswordHasher.Hash(newPassword);
+        admin.PasswordHash = PasswordHasher.Hash(request.NewPassword);
         admin.IsActive = true;
         admin.IsLocked = false;
         admin.FailedLoginAttempts = 0;
