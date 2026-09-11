@@ -413,8 +413,8 @@ function App() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [showRecovery, setShowRecovery] = useState(false);
-  const [recoveryFile, setRecoveryFile] = useState<File | null>(null);
   const [newPassword, setNewPassword] = useState("");
+  const [confirmRecoveryPassword, setConfirmRecoveryPassword] = useState("");
 
   async function refreshActivationState() {
     const response = await fetch(
@@ -544,14 +544,30 @@ function App() {
           </button>
           <button type="button" onClick={() => setShowRecovery(value => !value)}>Forgot administrator password?</button>
           {showRecovery && <>
-            <p>Local access and the active FSM-Recovery.fsmkey are required.</p>
-            <input type="file" accept=".fsmkey" onChange={event => setRecoveryFile(event.target.files?.[0] ?? null)} />
+            <p>Reset the Office administrator password on this PC.</p>
             <input type="password" placeholder="New administrator password" value={newPassword} onChange={event => setNewPassword(event.target.value)} />
-            <button type="button" disabled={!recoveryFile || newPassword.length < 8} onClick={async () => {
-              const form = new FormData(); form.append("recoveryFile", recoveryFile!); form.append("newPassword", newPassword);
-              const response = await fetch(`${apiBaseUrl}/auth/emergency-recovery`, { method: "POST", body: form });
-              const body = await response.json().catch(() => null); setError(body?.message ?? "Recovery failed.");
-            }}>Emergency Recovery</button>
+            <input type="password" placeholder="Repeat new password" value={confirmRecoveryPassword} onChange={event => setConfirmRecoveryPassword(event.target.value)} />
+            <button type="button" disabled={newPassword.length < 8 || newPassword !== confirmRecoveryPassword} onClick={async () => {
+              setBusy(true);
+              setError("");
+              try {
+                const response = await fetch(`${apiBaseUrl}/auth/local-emergency-recovery`, {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ newPassword }),
+                });
+                const body = await response.json().catch(() => null);
+                if (!response.ok) throw new Error(body?.message ?? "Recovery failed.");
+                setPassword(newPassword);
+                setShowRecovery(false);
+                setConfirmRecoveryPassword("");
+                setError(body?.message ?? "Password reset successfully. Sign in with the new password.");
+              } catch (error) {
+                setError((error as Error).message);
+              } finally {
+                setBusy(false);
+              }
+            }}>{busy ? "Resetting..." : "Reset Password"}</button>
           </>}
         </form>
       </div>
