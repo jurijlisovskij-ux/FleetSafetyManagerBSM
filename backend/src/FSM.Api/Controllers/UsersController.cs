@@ -18,7 +18,7 @@ public sealed record SaveUserRequest(
     string? Password,
     IReadOnlyList<Guid> VesselIds,
     bool ForcePasswordChange = false);
-public sealed record ResetPasswordRequest(string Password, bool TemporaryPassword);
+public sealed record ResetPasswordRequest(string Password);
 
 [ApiController]
 [Authorize(Roles = "OfficeAdmin")]
@@ -82,8 +82,8 @@ public sealed class UsersController(FsmDbContext db, AuditService audit) : Contr
             PasswordHash =
                 PasswordHasher.Hash(request.Password),
             Role = request.Role,
-            IsActive = request.IsActive
-            ,ForcePasswordChange = request.ForcePasswordChange
+            IsActive = request.IsActive,
+            ForcePasswordChange = false
         };
 
         db.Users.Add(user);
@@ -136,6 +136,7 @@ public sealed class UsersController(FsmDbContext db, AuditService audit) : Contr
         user.Email = NormalizeEmail(request.Email);
         user.Role = request.Role;
         user.IsActive = request.IsActive;
+        user.ForcePasswordChange = false;
 
         if (!string.IsNullOrWhiteSpace(request.Password))
         {
@@ -197,13 +198,15 @@ public sealed class UsersController(FsmDbContext db, AuditService audit) : Contr
             return BadRequest(new { message = "Password must contain at least 8 characters." });
         var user = await db.Users.SingleOrDefaultAsync(x => x.Id == userId, cancellationToken);
         if (user is null) return NotFound();
+        if (user.Role == UserRole.OfficeAdmin)
+            return BadRequest(new { message = "The OfficeAdmin password can only be changed using email verification on the sign-in page." });
         user.PasswordHash = PasswordHasher.Hash(request.Password);
-        user.ForcePasswordChange = request.TemporaryPassword;
+        user.ForcePasswordChange = false;
         user.IsLocked = false;
         user.FailedLoginAttempts = 0;
         audit.Add("Password reset", User.Identity?.Name ?? "OfficeAdmin", user.Username);
         await db.SaveChangesAsync(cancellationToken);
-        return Ok(new { message = "Password reset successfully.", user.ForcePasswordChange });
+        return Ok(new { message = "Password set successfully." });
     }
 
     [HttpPost("{userId:guid}/unlock")]
@@ -254,6 +257,8 @@ public sealed class UsersController(FsmDbContext db, AuditService audit) : Contr
         var email = request.Email?.Trim();
         if (!string.IsNullOrWhiteSpace(email) && !email.Contains('@'))
             return BadRequest(new { message = "Enter a valid Email or leave it empty." });
+        if (request.Role == UserRole.OfficeAdmin && string.IsNullOrWhiteSpace(email))
+            return BadRequest(new { message = "A registered email is required for OfficeAdmin password recovery." });
 
         if (request.Role != UserRole.OfficeAdmin)
         {

@@ -11,8 +11,11 @@ using Microsoft.EntityFrameworkCore;
 namespace FSM.Api.Controllers;
 
 public sealed record LoginRequest(string? Username, string Password, string? Email = null);
-public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
-public sealed record LocalRecoveryRequest(string NewPassword);
+public sealed record AdminRecoveryRequest(string Email);
+public sealed record AdminRecoveryConfirmRequest(
+    string Email,
+    string Code,
+    string NewPassword);
 
 [ApiController]
 [Route("api/auth")]
@@ -21,7 +24,8 @@ public sealed class AuthController(
     JwtTokenService jwtTokenService,
     IConfiguration configuration,
     AuditService audit,
-    RecoveryKeyService recoveryKeys) : ControllerBase
+    EmailSender emailSender,
+    AdminPasswordRecoveryService passwordRecovery) : ControllerBase
 {
     [HttpPost("login")]
     public async Task<IActionResult> Login(
@@ -83,7 +87,7 @@ public sealed class AuthController(
             user.Email,
             role = user.Role.ToString(),
             edition,
-            user.ForcePasswordChange
+            ForcePasswordChange = false
         });
     }
 
@@ -94,103 +98,89 @@ public sealed class AuthController(
         fullName = User.Identity?.Name
     });
 
-    [Authorize]
-    [HttpPost("change-password")]
-    public async Task<IActionResult> ChangePassword(ChangePasswordRequest request,
-        CancellationToken cancellationToken)
-    {
-        var id = Guid.Parse(User.FindFirst(System.Security.Claims.ClaimTypes.NameIdentifier)!.Value);
-        var user = await db.Users.SingleAsync(x => x.Id == id, cancellationToken);
-        if (!PasswordHasher.Verify(request.CurrentPassword, user.PasswordHash))
-            return BadRequest(new { message = "Current password is incorrect." });
-        if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 8)
-            return BadRequest(new { message = "New password must contain at least 8 characters." });
-        user.PasswordHash = PasswordHasher.Hash(request.NewPassword);
-        user.ForcePasswordChange = false;
-        audit.Add("Password changed", user.Username, user.Username);
-        await db.SaveChangesAsync(cancellationToken);
-        return Ok(new { message = "Password changed successfully." });
-    }
-
-    [Authorize(Roles = "OfficeAdmin")]
-    [HttpGet("recovery-key")]
-    public IActionResult ExportRecoveryKey() => File(recoveryKeys.Export(),
-        "application/octet-stream", "FSM-Recovery.fsmkey");
-
-    [Authorize(Roles = "OfficeAdmin")]
-    [HttpPost("recovery-key/rotate")]
-    public async Task<IActionResult> RotateRecoveryKey(CancellationToken cancellationToken)
-    {
-        var bytes = recoveryKeys.Rotate();
-        audit.Add("Recovery key rotated", User.Identity?.Name ?? "OfficeAdmin", null);
-        await db.SaveChangesAsync(cancellationToken);
-        return File(bytes, "application/octet-stream", "FSM-Recovery.fsmkey");
-    }
-
     [AllowAnonymous]
-    [HttpPost("local-emergency-recovery")]
-    public async Task<IActionResult> LocalEmergencyRecovery(
-        LocalRecoveryRequest request,
+    [HttpPost("administrator-recovery/request")]
+    public async Task<IActionResult> RequestAdministratorRecovery(
+        AdminRecoveryRequest request,
         CancellationToken cancellationToken)
     {
-        if (!(configuration["Application:Edition"] ?? "Office")
-            .Equals("Office", StringComparison.OrdinalIgnoreCase))
-        {
-            return StatusCode(403, new
+        var restriction = ValidateRecoveryEnvironment();
+        if (restriction is not null) return restriction;
+        if (string.IsNullOrWhiteSpace(request.Email) || !request.Email.Contains('@'))
+            return BadRequest(new { message = "Enter the registered administrator email." });
+        if (!emailSender.IsConfigured)
+            return StatusCode(StatusCodes.Status503ServiceUnavailable, new
             {
-                message = "Administrator recovery is available only in Office Edition."
+                message = "Administrator email recovery is not configured. Configure the company SMTP server first."
             });
-        }
 
-        var remoteAddress = HttpContext.Connection.RemoteIpAddress;
-        if (remoteAddress is null || !IPAddress.IsLoopback(remoteAddress))
-        {
-            return StatusCode(403, new
-            {
-                message = "Administrator recovery must be performed on the Office PC."
-            });
-        }
-
-        if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 8)
-            return BadRequest(new { message = "New password must contain at least 8 characters." });
-
-        var admin = await db.Users.SingleAsync(
+        var normalizedEmail = request.Email.Trim().ToLowerInvariant();
+        var admin = await db.Users.AsNoTracking().SingleOrDefaultAsync(
             x => x.Role == UserRole.OfficeAdmin,
             cancellationToken);
-        admin.PasswordHash = PasswordHasher.Hash(request.NewPassword);
-        admin.IsActive = true;
-        admin.IsLocked = false;
-        admin.FailedLoginAttempts = 0;
-        admin.ForcePasswordChange = false;
-        audit.Add("Local administrator recovery", "Office PC", admin.Username);
+
+        // Always return the same result for an unknown email.
+        if (admin is null || string.IsNullOrWhiteSpace(admin.Email) ||
+            !string.Equals(admin.Email.Trim(), normalizedEmail,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            return Ok(new { message = RecoveryRequestMessage });
+        }
+
+        var issued = passwordRecovery.Issue(normalizedEmail);
+        var safeCode = WebUtility.HtmlEncode(issued.Code);
+        await emailSender.SendAsync(
+            normalizedEmail,
+            "Fleet Safety Manager administrator password code",
+            $"<p>Your Fleet Safety Manager verification code is:</p><p style=\"font-size:28px;font-weight:bold;letter-spacing:4px\">{safeCode}</p><p>This code expires in 10 minutes and can be used once.</p>",
+            cancellationToken);
+        audit.Add("Administrator recovery code sent", "Office PC", admin.Username);
         await db.SaveChangesAsync(cancellationToken);
-        return Ok(new { message = "Password reset successfully. Sign in with the new password." });
+        return Ok(new { message = RecoveryRequestMessage });
     }
 
     [AllowAnonymous]
-    [HttpPost("emergency-recovery")]
-    [RequestSizeLimit(1024 * 1024)]
-    public async Task<IActionResult> EmergencyRecovery(IFormFile recoveryFile,
-        [FromForm] string newPassword, CancellationToken cancellationToken)
+    [HttpPost("administrator-recovery/confirm")]
+    public async Task<IActionResult> ConfirmAdministratorRecovery(
+        AdminRecoveryConfirmRequest request,
+        CancellationToken cancellationToken)
     {
-        if (!(configuration["Application:Edition"] ?? "Office").Equals("Office", StringComparison.OrdinalIgnoreCase))
-            return StatusCode(403, new { message = "Administrator recovery is available only in Office Edition." });
-        await using var stream = recoveryFile.OpenReadStream();
-        using var memory = new MemoryStream();
-        await stream.CopyToAsync(memory, cancellationToken);
-        if (!recoveryKeys.Validate(memory.ToArray()))
-            return Unauthorized(new { message = "The recovery key is invalid or no longer active." });
-        if (string.IsNullOrWhiteSpace(newPassword) || newPassword.Length < 8)
+        var restriction = ValidateRecoveryEnvironment();
+        if (restriction is not null) return restriction;
+        if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 8)
             return BadRequest(new { message = "New password must contain at least 8 characters." });
-        var admin = await db.Users.SingleAsync(x => x.Role == UserRole.OfficeAdmin, cancellationToken);
+        var admin = await db.Users.SingleOrDefaultAsync(
+            x => x.Role == UserRole.OfficeAdmin,
+            cancellationToken);
+        if (admin is null || string.IsNullOrWhiteSpace(admin.Email) ||
+            !string.Equals(admin.Email.Trim(), request.Email.Trim(), StringComparison.OrdinalIgnoreCase) ||
+            !passwordRecovery.TryConsume(request.Email, request.Code))
+        {
+            return Unauthorized(new { message = "The verification code is invalid or expired." });
+        }
+
         admin.PasswordHash = PasswordHasher.Hash(newPassword);
         admin.IsActive = true;
         admin.IsLocked = false;
         admin.FailedLoginAttempts = 0;
         admin.ForcePasswordChange = false;
-        audit.Add("Emergency recovery", "Local recovery key", admin.Username);
-        audit.Add("Administrator recovery", "Local recovery key", admin.Username);
+        audit.Add("Administrator password recovered by email", "Office PC", admin.Username);
         await db.SaveChangesAsync(cancellationToken);
-        return Ok(new { message = "Administrator password recovered successfully." });
+        return Ok(new { message = "Administrator password changed. Sign in with the new password." });
     }
+
+    private IActionResult? ValidateRecoveryEnvironment()
+    {
+        if (!(configuration["Application:Edition"] ?? "Office")
+            .Equals("Office", StringComparison.OrdinalIgnoreCase))
+            return StatusCode(403, new { message = "Administrator recovery is available only in Office Edition." });
+
+        var address = HttpContext.Connection.RemoteIpAddress;
+        return address is null || !IPAddress.IsLoopback(address)
+            ? StatusCode(403, new { message = "Administrator recovery must be performed on the Office PC." })
+            : null;
+    }
+
+    private const string RecoveryRequestMessage =
+        "If this email is registered for OfficeAdmin, a 6-digit code has been sent.";
 }

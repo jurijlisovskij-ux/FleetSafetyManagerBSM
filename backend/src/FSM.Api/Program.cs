@@ -50,6 +50,7 @@ builder.Services.Configure<SmtpSettings>(
 builder.Services.Configure<SynchronizationOptions>(
     builder.Configuration.GetSection(SynchronizationOptions.SectionName));
 builder.Services.AddSingleton<EmailSender>();
+builder.Services.AddSingleton<AdminPasswordRecoveryService>();
 builder.Services.AddHostedService<DailyNotificationWorker>();
 builder.Services.AddDataProtection()
     .PersistKeysToFileSystem(new DirectoryInfo(
