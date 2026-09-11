@@ -3,6 +3,7 @@ param()
 
 $ErrorActionPreference = "Stop"
 $pilotRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
+$packageRoot = Split-Path -Parent $pilotRoot
 $cloudflared = Join-Path $pilotRoot "cloudflared.exe"
 $stateRoot = Join-Path $env:LOCALAPPDATA "FleetSafetyManager\RemotePilot"
 $logPath = Join-Path $stateRoot "cloudflared.log"
@@ -70,6 +71,8 @@ $process = Start-Process -FilePath $cloudflared -ArgumentList @(
 ) -WindowStyle Hidden -PassThru
 Set-Content -Path $pidPath -Value $process.Id -Encoding ASCII
 
+Write-Host ""
+Write-Host "Creating secure Internet connection. Please wait..." -ForegroundColor Yellow
 $deadline = (Get-Date).AddSeconds(60)
 $publicUrl = $null
 while ((Get-Date) -lt $deadline -and -not $process.HasExited) {
@@ -98,10 +101,9 @@ $encodedActivationCode = [Convert]::ToBase64String(
     [Text.Encoding]::UTF8.GetBytes($activation.activationCode))
 $safeVesselName = ($selectedVessel.vesselName -replace '[^A-Za-z0-9_-]', '_').Trim('_')
 if ([string]::IsNullOrWhiteSpace($safeVesselName)) { $safeVesselName = "Vessel" }
-$shipPackage = Join-Path ([Environment]::GetFolderPath("Desktop")) ("FSM_Ship_{0}_Pilot" -f $safeVesselName)
+$shipPackage = Join-Path $packageRoot ("FSM_Ship_{0}_Pilot" -f $safeVesselName)
 New-Item -ItemType Directory -Path $shipPackage -Force | Out-Null
 Copy-Item (Join-Path $pilotRoot "Install-FSM-Ship-Pilot.ps1") $shipPackage -Force
-$packageRoot = Split-Path -Parent $pilotRoot
 $shipInstaller = Get-ChildItem -Path $packageRoot -Filter "FleetSafetyManager_Ship_Setup_Build*.exe" |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if (-not $shipInstaller) {
@@ -146,3 +148,6 @@ Write-Host "Ship connection folder: $shipPackage"
 Write-Host ""
 Write-Host "Keep this Office PC switched on during the test."
 Write-Host "Use Stop-FSM-Remote-Pilot.cmd when the test is finished."
+Start-Process explorer.exe -ArgumentList $shipPackage
+Write-Host ""
+Read-Host "The Ship package folder is open. Press Enter to close this window (the tunnel will continue running)"
