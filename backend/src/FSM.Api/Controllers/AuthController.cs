@@ -3,6 +3,7 @@ using FSM.Api.Services;
 using FSM.Domain.Enums;
 using FSM.Infrastructure.Persistence;
 using FSM.Infrastructure.Security;
+using System.Net;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -11,6 +12,7 @@ namespace FSM.Api.Controllers;
 
 public sealed record LoginRequest(string? Username, string Password, string? Email = null);
 public sealed record ChangePasswordRequest(string CurrentPassword, string NewPassword);
+public sealed record LocalRecoveryRequest(string NewPassword);
 
 [ApiController]
 [Route("api/auth")]
@@ -123,6 +125,46 @@ public sealed class AuthController(
         audit.Add("Recovery key rotated", User.Identity?.Name ?? "OfficeAdmin", null);
         await db.SaveChangesAsync(cancellationToken);
         return File(bytes, "application/octet-stream", "FSM-Recovery.fsmkey");
+    }
+
+    [AllowAnonymous]
+    [HttpPost("local-emergency-recovery")]
+    public async Task<IActionResult> LocalEmergencyRecovery(
+        LocalRecoveryRequest request,
+        CancellationToken cancellationToken)
+    {
+        if (!(configuration["Application:Edition"] ?? "Office")
+            .Equals("Office", StringComparison.OrdinalIgnoreCase))
+        {
+            return StatusCode(403, new
+            {
+                message = "Administrator recovery is available only in Office Edition."
+            });
+        }
+
+        var remoteAddress = HttpContext.Connection.RemoteIpAddress;
+        if (remoteAddress is null || !IPAddress.IsLoopback(remoteAddress))
+        {
+            return StatusCode(403, new
+            {
+                message = "Administrator recovery must be performed on the Office PC."
+            });
+        }
+
+        if (string.IsNullOrWhiteSpace(request.NewPassword) || request.NewPassword.Length < 8)
+            return BadRequest(new { message = "New password must contain at least 8 characters." });
+
+        var admin = await db.Users.SingleAsync(
+            x => x.Role == UserRole.OfficeAdmin,
+            cancellationToken);
+        admin.PasswordHash = PasswordHasher.Hash(request.NewPassword);
+        admin.IsActive = true;
+        admin.IsLocked = false;
+        admin.FailedLoginAttempts = 0;
+        admin.ForcePasswordChange = false;
+        audit.Add("Local administrator recovery", "Office PC", admin.Username);
+        await db.SaveChangesAsync(cancellationToken);
+        return Ok(new { message = "Password reset successfully. Sign in with the new password." });
     }
 
     [AllowAnonymous]
