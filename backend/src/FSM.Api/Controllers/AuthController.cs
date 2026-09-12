@@ -16,6 +16,7 @@ public sealed record AdminRecoveryConfirmRequest(
     string Email,
     string Code,
     string NewPassword);
+public sealed record AdminEmailSetupRequest(string AppPassword);
 
 [ApiController]
 [Route("api/auth")]
@@ -25,6 +26,7 @@ public sealed class AuthController(
     IConfiguration configuration,
     AuditService audit,
     EmailSender emailSender,
+    EmailRecoverySettingsStore emailSettings,
     AdminPasswordRecoveryService passwordRecovery) : ControllerBase
 {
     [HttpPost("login")]
@@ -97,6 +99,32 @@ public sealed class AuthController(
     {
         fullName = User.Identity?.Name
     });
+
+    [AllowAnonymous]
+    [HttpPost("administrator-recovery/setup-email")]
+    public async Task<IActionResult> SetupAdministratorEmail(
+        AdminEmailSetupRequest request,
+        CancellationToken cancellationToken)
+    {
+        var restriction = ValidateRecoveryEnvironment();
+        if (restriction is not null) return restriction;
+        if (emailSender.IsConfigured)
+            return Conflict(new { message = "Administrator email recovery is already configured." });
+        if (string.IsNullOrWhiteSpace(request.AppPassword) || request.AppPassword.Trim().Length < 8)
+            return BadRequest(new { message = "Enter the Google app password." });
+
+        const string address = "baltnautic@gmail.com";
+        emailSettings.Save(new EmailRecoverySettings("smtp.gmail.com", 587, true,
+            address, request.AppPassword.Trim(), address, "Fleet Safety Manager"));
+        var admin = await db.Users.SingleAsync(x => x.Role == UserRole.OfficeAdmin,
+            cancellationToken);
+        admin.Email = address;
+        await emailSender.SendAsync(address, "Fleet Safety Manager email recovery test",
+            "<p>Email recovery has been configured successfully.</p>", cancellationToken);
+        audit.Add("Administrator email recovery configured", "Office PC", admin.Username);
+        await db.SaveChangesAsync(cancellationToken);
+        return Ok(new { message = "Email recovery configured. Test email sent to baltnautic@gmail.com." });
+    }
 
     [AllowAnonymous]
     [HttpPost("administrator-recovery/request")]

@@ -416,6 +416,7 @@ function App() {
   const [recoveryCodeSent, setRecoveryCodeSent] = useState(false);
   const [newPassword, setNewPassword] = useState("");
   const [confirmRecoveryPassword, setConfirmRecoveryPassword] = useState("");
+  const [emailSetupPassword, setEmailSetupPassword] = useState("");
 
   async function refreshActivationState() {
     const response = await fetch(
@@ -546,6 +547,21 @@ function App() {
           <button type="button" onClick={() => setShowRecovery(value => !value)}>Forgot administrator password?</button>
           {showRecovery && <>
             <p>A one-time verification code will be sent to the registered OfficeAdmin email.</p>
+            <details><summary>First-time Gmail setup</summary>
+              <p>Enter the Google app password once. The recovery email is fixed as <strong>baltnautic@gmail.com</strong>.</p>
+              <input type="password" autoComplete="new-password" placeholder="Google app password"
+                value={emailSetupPassword} onChange={event => setEmailSetupPassword(event.target.value)} />
+              <button type="button" disabled={busy || emailSetupPassword.trim().length < 8} onClick={async () => {
+                setBusy(true); setError("");
+                const response = await fetch(`${apiBaseUrl}/auth/administrator-recovery/setup-email`, {
+                  method: "POST", headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ appPassword: emailSetupPassword }),
+                });
+                const body = await response.json().catch(() => null);
+                setBusy(false); setError(body?.message ?? "Unable to configure email recovery.");
+                if (response.ok) { setEmailSetupPassword(""); setRecoveryEmail("baltnautic@gmail.com"); }
+              }}>Save and Send Test Email</button>
+            </details>
             <label>Administrator email<input type="email" value={recoveryEmail}
               onChange={event => setRecoveryEmail(event.target.value)} /></label>
             {!recoveryCodeSent && <button type="button" disabled={busy || !recoveryEmail.includes("@")} onClick={async () => {
