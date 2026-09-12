@@ -1307,16 +1307,20 @@ function AdministrationDialog({ token, onClose, onSynchronizationDiagnostics }: 
   const [error, setError] = useState("");
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
   const [retentionDays, setRetentionDays] = useState(365);
+  const [emailRecoveryConfigured, setEmailRecoveryConfigured] = useState(false);
+  const [googleAppPassword, setGoogleAppPassword] = useState("");
 
   async function load() {
-    const [overviewResponse, healthResponse] = await Promise.all([
+    const [overviewResponse, healthResponse, emailResponse] = await Promise.all([
       authFetch(`${apiBaseUrl}/administration/overview`, token, { cache: "no-store" }),
       authFetch(`${apiBaseUrl}/administration/health`, token, { cache: "no-store" }),
+      authFetch(`${apiBaseUrl}/administration/email-recovery`, token, { cache: "no-store" }),
     ]);
-    if (!overviewResponse.ok || !healthResponse.ok)
+    if (!overviewResponse.ok || !healthResponse.ok || !emailResponse.ok)
       throw new Error("Unable to load administration status.");
     setOverview(await overviewResponse.json());
     setHealth(await healthResponse.json());
+    setEmailRecoveryConfigured((await emailResponse.json()).configured);
   }
 
   useEffect(() => { void load().catch(exception => setError((exception as Error).message)); }, []);
@@ -1372,7 +1376,21 @@ function AdministrationDialog({ token, onClose, onSynchronizationDiagnostics }: 
         <div><span>Edition</span><strong>{overview?.edition ?? "—"}</strong></div>
         <div><span>Environment</span><strong>{overview?.environment ?? "—"}</strong></div>
         <div><span>Computer</span><strong>{overview?.machineName ?? "—"}</strong></div>
-      </div><p className="muted">Synchronization settings remain available from the Settings button in the main header.</p></section>}
+      </div><hr/><h3>Administrator Email Recovery</h3>
+        <p>Recovery codes will be sent to <strong>baltnautic@gmail.com</strong> through Gmail.</p>
+        <p className="muted">Create a Google app password for Fleet Safety Manager. Do not use your normal Gmail password.</p>
+        <label>Google app password<input type="password" autoComplete="new-password"
+          placeholder={emailRecoveryConfigured ? "Configured — enter only to replace" : "16-character app password"}
+          value={googleAppPassword} onChange={event => setGoogleAppPassword(event.target.value)} /></label>
+        <button className="primary" disabled={busy || googleAppPassword.trim().length < 8}
+          onClick={() => action("/administration/email-recovery", { method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ administratorEmail: "baltnautic@gmail.com", appPassword: googleAppPassword })
+          }).then(() => setGoogleAppPassword(""))}>
+          Save and Send Test Email
+        </button>
+        <p><strong>Status:</strong> {emailRecoveryConfigured ? "Configured" : "Not configured"}</p>
+        <hr/><p className="muted">Synchronization settings remain available from the Settings button in the main header.</p></section>}
       {tab === "backup" && <section><h3>Backup / Restore</h3>
         <p>Create a consistent database backup before updates or maintenance.</p>
         <button className="primary" disabled={busy} onClick={() => download("/administration/backup", "FSM-Backup.db")}>Download Backup</button>

@@ -49,8 +49,6 @@ builder.Services.Configure<SmtpSettings>(
     builder.Configuration.GetSection("Smtp"));
 builder.Services.Configure<SynchronizationOptions>(
     builder.Configuration.GetSection(SynchronizationOptions.SectionName));
-builder.Services.AddSingleton<EmailSender>();
-builder.Services.AddSingleton<AdminPasswordRecoveryService>();
 builder.Services.AddHostedService<DailyNotificationWorker>();
 builder.Services.AddDataProtection()
     .PersistKeysToFileSystem(new DirectoryInfo(
@@ -58,6 +56,9 @@ builder.Services.AddDataProtection()
             builder.Configuration["DataProtection:KeyPath"] ??
             Path.Combine("Data", "Keys"),
             AppContext.BaseDirectory)));
+builder.Services.AddSingleton<EmailRecoverySettingsStore>();
+builder.Services.AddSingleton<EmailSender>();
+builder.Services.AddSingleton<AdminPasswordRecoveryService>();
 builder.Services.AddHttpClient("Synchronization", client =>
 {
     var timeoutMinutes = builder.Configuration.GetValue<int?>(

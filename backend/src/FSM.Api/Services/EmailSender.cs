@@ -1,18 +1,16 @@
 using System.Net;
 using System.Net.Mail;
-using Microsoft.Extensions.Options;
 
 namespace FSM.Api.Services;
 
 public sealed class EmailSender(
-    IOptions<SmtpSettings> options,
+    EmailRecoverySettingsStore settingsStore,
     ILogger<EmailSender> logger)
 {
-    private readonly SmtpSettings settings = options.Value;
-
-    public bool IsConfigured =>
+    public bool IsConfigured { get { var settings = settingsStore.Get(); return
         !string.IsNullOrWhiteSpace(settings.Host) &&
-        !string.IsNullOrWhiteSpace(settings.FromAddress);
+        !string.IsNullOrWhiteSpace(settings.FromAddress) &&
+        !string.IsNullOrWhiteSpace(settings.Password); } }
 
     public async Task SendAsync(
         string recipient,
@@ -20,8 +18,8 @@ public sealed class EmailSender(
         string htmlBody,
         CancellationToken cancellationToken)
     {
-        if (!IsConfigured)
-            return;
+        var settings = settingsStore.Get();
+        if (!IsConfigured) throw new InvalidOperationException("Administrator email recovery is not configured.");
 
         using var message = new MailMessage
         {
