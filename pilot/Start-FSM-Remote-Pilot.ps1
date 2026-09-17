@@ -18,6 +18,24 @@ function Stop-PreviousTunnel {
     Remove-Item $pidPath -Force -ErrorAction SilentlyContinue
 }
 
+function Get-ActiveTunnelUrl {
+    if (-not (Test-Path $pidPath) -or -not (Test-Path $logPath)) {
+        return $null
+    }
+    $existingPid = (Get-Content $pidPath -Raw -ErrorAction SilentlyContinue).Trim()
+    if ($existingPid -notmatch '^\d+$' -or
+        -not (Get-Process -Id ([int]$existingPid) -ErrorAction SilentlyContinue)) {
+        return $null
+    }
+    $match = Select-String -Path $logPath `
+        -Pattern 'https://[a-z0-9-]+\.trycloudflare\.com' `
+        -AllMatches | Select-Object -Last 1
+    if ($match) {
+        return $match.Matches[0].Value.TrimEnd('/')
+    }
+    return $null
+}
+
 function Get-OfficeCatalog {
     try {
         return Invoke-RestMethod `
@@ -59,38 +77,44 @@ if ($vessels.Count -eq 1) {
 }
 
 New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
-Stop-PreviousTunnel
-Remove-Item $logPath -Force -ErrorAction SilentlyContinue
+$publicUrl = Get-ActiveTunnelUrl
+if ($publicUrl) {
+    Write-Host ""
+    Write-Host "Reusing the active secure Internet connection." -ForegroundColor Green
+}
+else {
+    Stop-PreviousTunnel
+    Remove-Item $logPath -Force -ErrorAction SilentlyContinue
 
-$process = Start-Process -FilePath $cloudflared -ArgumentList @(
-    "tunnel",
-    "--no-autoupdate",
-    "--url", "http://127.0.0.1:8080",
-    "--logfile", $logPath,
-    "--loglevel", "info"
-) -WindowStyle Hidden -PassThru
-Set-Content -Path $pidPath -Value $process.Id -Encoding ASCII
+    $process = Start-Process -FilePath $cloudflared -ArgumentList @(
+        "tunnel",
+        "--no-autoupdate",
+        "--url", "http://127.0.0.1:8080",
+        "--logfile", $logPath,
+        "--loglevel", "info"
+    ) -WindowStyle Hidden -PassThru
+    Set-Content -Path $pidPath -Value $process.Id -Encoding ASCII
 
-Write-Host ""
-Write-Host "Creating secure Internet connection. Please wait..." -ForegroundColor Yellow
-$deadline = (Get-Date).AddSeconds(60)
-$publicUrl = $null
-while ((Get-Date) -lt $deadline -and -not $process.HasExited) {
-    Start-Sleep -Milliseconds 500
-    if (Test-Path $logPath) {
-        $match = Select-String -Path $logPath `
-            -Pattern 'https://[a-z0-9-]+\.trycloudflare\.com' `
-            -AllMatches | Select-Object -Last 1
-        if ($match) {
-            $publicUrl = $match.Matches[0].Value.TrimEnd('/')
-            break
+    Write-Host ""
+    Write-Host "Creating secure Internet connection. Please wait..." -ForegroundColor Yellow
+    $deadline = (Get-Date).AddSeconds(60)
+    while ((Get-Date) -lt $deadline -and -not $process.HasExited) {
+        Start-Sleep -Milliseconds 500
+        if (Test-Path $logPath) {
+            $match = Select-String -Path $logPath `
+                -Pattern 'https://[a-z0-9-]+\.trycloudflare\.com' `
+                -AllMatches | Select-Object -Last 1
+            if ($match) {
+                $publicUrl = $match.Matches[0].Value.TrimEnd('/')
+                break
+            }
         }
     }
-}
 
-if (-not $publicUrl) {
-    Stop-PreviousTunnel
-    throw "The protected temporary tunnel could not be created. Check the Internet connection and try again."
+    if (-not $publicUrl) {
+        Stop-PreviousTunnel
+        throw "The protected temporary tunnel could not be created. Check the Internet connection and try again."
+    }
 }
 
 $encodedUrl = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($publicUrl))
@@ -104,10 +128,10 @@ if ([string]::IsNullOrWhiteSpace($safeVesselName)) { $safeVesselName = "Vessel" 
 $shipPackage = Join-Path $packageRoot ("FSM_Ship_{0}_Pilot" -f $safeVesselName)
 New-Item -ItemType Directory -Path $shipPackage -Force | Out-Null
 Copy-Item (Join-Path $pilotRoot "Install-FSM-Ship-Pilot.ps1") $shipPackage -Force
-$shipInstaller = Get-ChildItem -Path $packageRoot -Filter "FleetSafetyManager_Ship_Setup_Build*.exe" |
+$shipInstaller = Get-ChildItem -Path $packageRoot -Filter "FleetSafetyManager_Ship_Setup*.exe" |
     Sort-Object LastWriteTime -Descending | Select-Object -First 1
 if (-not $shipInstaller) {
-    throw "The Build-numbered Ship installer is missing from the Remote Pilot package."
+    throw "The Ship installer is missing from the Remote Pilot package."
 }
 Copy-Item $shipInstaller.FullName (Join-Path $shipPackage "Install FSM Ship.exe") -Force
 
@@ -147,6 +171,7 @@ Write-Host "Vessel: $($selectedVessel.vesselName) (IMO $($selectedVessel.imoNumb
 Write-Host "Ship connection folder: $shipPackage"
 Write-Host ""
 Write-Host "Keep this Office PC switched on during the test."
+Write-Host "Run this file again to create another vessel package using the same address."
 Write-Host "Use Stop-FSM-Remote-Pilot.cmd when the test is finished."
 Start-Process explorer.exe -ArgumentList $shipPackage
 Write-Host ""

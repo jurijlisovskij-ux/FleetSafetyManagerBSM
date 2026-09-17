@@ -215,6 +215,8 @@ jobs:
           $startScript = Get-Content "$toolsRoot/Start-FSM-Remote-Pilot.ps1" -Raw
           $shipScript = Get-Content "$toolsRoot/Connect-FSM-Ship-Pilot.ps1" -Raw
           if ($startScript -notmatch 'trycloudflare\\.com' -or
+              $startScript -notmatch 'Get-ActiveTunnelUrl' -or
+              $startScript -notmatch [regex]::Escape('FleetSafetyManager_Ship_Setup*.exe') -or
               $shipScript -notmatch 'OfficeBaseUrl' -or
               $shipScript -notmatch 'AllowInsecureHttp') {
             throw "Remote Pilot zero-configuration scripts failed validation."
