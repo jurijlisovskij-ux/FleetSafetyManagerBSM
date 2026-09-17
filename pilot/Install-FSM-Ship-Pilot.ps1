@@ -14,6 +14,22 @@ function Test-Administrator {
 }
 
 if (-not (Test-Administrator)) {
+    $uacMessage = @"
+Fleet Safety Manager Ship requires Windows administrator permission once.
+
+After you press OK, Windows will display a confirmation window.
+Select YES to continue the automatic installation.
+
+If this PC uses a standard Windows account, enter the administrator password.
+"@
+    try {
+        $shell = New-Object -ComObject WScript.Shell
+        $shell.Popup($uacMessage, 0, "FSM Ship Installation", 64) | Out-Null
+    }
+    catch {
+        Write-Host $uacMessage -ForegroundColor Yellow
+    }
+
     $arguments = @(
         "-NoProfile", "-ExecutionPolicy", "Bypass",
         "-File", ('"{0}"' -f $PSCommandPath),
@@ -21,7 +37,29 @@ if (-not (Test-Administrator)) {
         "-VesselId", $VesselId,
         "-EncodedActivationCode", $EncodedActivationCode
     )
-    $elevated = Start-Process powershell.exe -Verb RunAs -ArgumentList $arguments -Wait -PassThru
+    try {
+        $elevated = Start-Process powershell.exe -Verb RunAs `
+            -ArgumentList $arguments -WorkingDirectory $PSScriptRoot -Wait -PassThru
+    }
+    catch {
+        $wasCancelled = $_.Exception.Message -match 'canceled|cancelled'
+        $exception = $_.Exception
+        while ($null -ne $exception) {
+            if ($exception -is [System.ComponentModel.Win32Exception] -and
+                $exception.NativeErrorCode -eq 1223) {
+                $wasCancelled = $true
+                break
+            }
+            $exception = $exception.InnerException
+        }
+        if ($wasCancelled) {
+            Write-Host ""
+            Write-Host "Installation was not started because Windows administrator approval was cancelled." -ForegroundColor Yellow
+            Write-Host 'Run "Install FSM Ship Pilot.cmd" again and select YES in the Windows confirmation window.'
+            exit 1223
+        }
+        throw
+    }
     exit $elevated.ExitCode
 }
 
