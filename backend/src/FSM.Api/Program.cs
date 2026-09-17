@@ -1,11 +1,15 @@
 using System.Security.Claims;
+using System.Security.Principal;
 using System.Text;
 using FSM.Api;
 using FSM.Api.Authorization;
 using FSM.Api.Auth;
 using FSM.Api.Services;
 using FSM.Api.Synchronization;
+using FSM.Domain.Entities;
+using FSM.Domain.Enums;
 using FSM.Infrastructure.Persistence;
+using FSM.Infrastructure.Security;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -14,7 +18,21 @@ using Microsoft.IdentityModel.Tokens;
 
 Directory.SetCurrentDirectory(AppContext.BaseDirectory);
 
-var builder = WebApplication.CreateBuilder(args);
+var resetAdministratorPassword = args.Contains(
+    "--reset-administrator-password",
+    StringComparer.OrdinalIgnoreCase);
+var hostArguments = resetAdministratorPassword
+    ? args.Where(value => !value.Equals(
+        "--reset-administrator-password",
+        StringComparison.OrdinalIgnoreCase)).ToArray()
+    : args;
+var builder = WebApplication.CreateBuilder(hostArguments);
+
+if (resetAdministratorPassword)
+{
+    Environment.ExitCode = await ResetAdministratorPasswordAsync(builder.Configuration);
+    return;
+}
 
 builder.Host.UseWindowsService(options =>
 {
@@ -58,7 +76,6 @@ builder.Services.AddDataProtection()
             AppContext.BaseDirectory)));
 builder.Services.AddSingleton<EmailRecoverySettingsStore>();
 builder.Services.AddSingleton<EmailSender>();
-builder.Services.AddSingleton<AdminPasswordRecoveryService>();
 builder.Services.AddHttpClient("Synchronization", client =>
 {
     var timeoutMinutes = builder.Configuration.GetValue<int?>(
@@ -75,7 +92,6 @@ builder.Services.AddScoped<OfficeDiscoveryService>();
 builder.Services.AddSingleton<ShipConfigurationProtectionService>();
 builder.Services.AddScoped<VesselAccessService>();
 builder.Services.AddScoped<AuditService>();
-builder.Services.AddSingleton<RecoveryKeyService>();
 builder.Services.AddHostedService<SynchronizationWorker>();
 builder.Services.AddHostedService<SynchronizationDiscoveryWorker>();
 builder.Services.Configure<ForwardedHeadersOptions>(options =>
@@ -186,12 +202,6 @@ using (var scope = app.Services.CreateScope())
     await scope.ServiceProvider
         .GetRequiredService<SynchronizationProvisioningService>()
         .EnsureExistingInstallationsAsync();
-    if (scope.ServiceProvider.GetRequiredService<RecoveryKeyService>().EnsureCreated())
-    {
-        scope.ServiceProvider.GetRequiredService<AuditService>()
-            .Add("Recovery key generated", "System", null);
-        await db.SaveChangesAsync();
-    }
 }
 
 app.Run();
@@ -212,4 +222,72 @@ static void ApplyPendingDatabaseRestore(string connectionString)
     }
     File.Move(pendingPath, databasePath, overwrite: true);
     Console.WriteLine("The staged Fleet Safety Manager database restore was applied.");
+}
+
+static async Task<int> ResetAdministratorPasswordAsync(IConfiguration configuration)
+{
+    if (!OperatingSystem.IsWindows())
+    {
+        Console.Error.WriteLine("Administrator password reset is available only on Windows.");
+        return 2;
+    }
+
+    var principal = new WindowsPrincipal(WindowsIdentity.GetCurrent());
+    if (!principal.IsInRole(WindowsBuiltInRole.Administrator))
+    {
+        Console.Error.WriteLine("Run the reset tool as a Windows administrator.");
+        return 3;
+    }
+
+    var edition = configuration["Application:Edition"] ?? "Office";
+    if (!edition.Equals("Office", StringComparison.OrdinalIgnoreCase))
+    {
+        Console.Error.WriteLine("Administrator password reset is available only in Office Edition.");
+        return 4;
+    }
+
+    var newPassword = Console.In.ReadLine() ?? string.Empty;
+    var repeatedPassword = Console.In.ReadLine() ?? string.Empty;
+    if (newPassword.Length < 8)
+    {
+        Console.Error.WriteLine("The new password must contain at least 8 characters.");
+        return 5;
+    }
+    if (!string.Equals(newPassword, repeatedPassword, StringComparison.Ordinal))
+    {
+        Console.Error.WriteLine("The passwords do not match.");
+        return 6;
+    }
+
+    var configuredConnection = configuration.GetConnectionString("DefaultConnection")
+        ?? throw new InvalidOperationException("Default database connection is missing.");
+    var connection = DatabaseConnectionResolver.Resolve(configuredConnection, AppContext.BaseDirectory);
+    var options = new DbContextOptionsBuilder<FsmDbContext>()
+        .UseSqlite(connection)
+        .Options;
+    await using var db = new FsmDbContext(options);
+    await db.Database.EnsureCreatedAsync();
+    await SchemaUpgrade.ApplyAsync(db);
+    await SeedData.InitializeAsync(db);
+
+    var administrator = await db.Users.SingleAsync(x => x.Role == UserRole.OfficeAdmin);
+    administrator.PasswordHash = PasswordHasher.Hash(newPassword);
+    administrator.IsActive = true;
+    administrator.IsLocked = false;
+    administrator.FailedLoginAttempts = 0;
+    administrator.ForcePasswordChange = false;
+    db.AuditLogs.Add(new AuditLog
+    {
+        Id = Guid.NewGuid(),
+        DateUtc = DateTime.UtcNow,
+        Action = "Administrator password reset locally",
+        Operator = WindowsIdentity.GetCurrent().Name,
+        TargetUser = administrator.Username,
+        ComputerName = Environment.MachineName,
+        Result = "Success",
+        Summary = "Password reset with the local elevated recovery tool."
+    });
+    await db.SaveChangesAsync();
+    Console.WriteLine("Administrator password changed successfully.");
+    return 0;
 }

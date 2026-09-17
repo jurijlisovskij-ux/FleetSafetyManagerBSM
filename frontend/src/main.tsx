@@ -411,12 +411,6 @@ function App() {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [showRecovery, setShowRecovery] = useState(false);
-  const [recoveryEmail, setRecoveryEmail] = useState("");
-  const [recoveryCode, setRecoveryCode] = useState("");
-  const [recoveryCodeSent, setRecoveryCodeSent] = useState(false);
-  const [newPassword, setNewPassword] = useState("");
-  const [confirmRecoveryPassword, setConfirmRecoveryPassword] = useState("");
-  const [emailSetupPassword, setEmailSetupPassword] = useState("");
 
   async function refreshActivationState() {
     const response = await fetch(
@@ -545,60 +539,11 @@ function App() {
             {busy ? "Signing in..." : "Sign In"}
           </button>
           <button type="button" onClick={() => setShowRecovery(value => !value)}>Forgot administrator password?</button>
-          {showRecovery && <>
-            <p>A one-time verification code will be sent to the registered OfficeAdmin email.</p>
-            <details><summary>First-time Gmail setup</summary>
-              <p>Enter the Google app password once. The recovery email is fixed as <strong>baltnautic@gmail.com</strong>.</p>
-              <input type="password" autoComplete="new-password" placeholder="Google app password"
-                value={emailSetupPassword} onChange={event => setEmailSetupPassword(event.target.value)} />
-              <button type="button" disabled={busy || emailSetupPassword.trim().length < 8} onClick={async () => {
-                setBusy(true); setError("");
-                const response = await fetch(`${apiBaseUrl}/auth/administrator-recovery/setup-email`, {
-                  method: "POST", headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ appPassword: emailSetupPassword }),
-                });
-                const body = await response.json().catch(() => null);
-                setBusy(false); setError(body?.message ?? "Unable to configure email recovery.");
-                if (response.ok) { setEmailSetupPassword(""); setRecoveryEmail("baltnautic@gmail.com"); }
-              }}>Save and Send Test Email</button>
-            </details>
-            <label>Administrator email<input type="email" value={recoveryEmail}
-              onChange={event => setRecoveryEmail(event.target.value)} /></label>
-            {!recoveryCodeSent && <button type="button" disabled={busy || !recoveryEmail.includes("@")} onClick={async () => {
-              setBusy(true); setError("");
-              const response = await fetch(`${apiBaseUrl}/auth/administrator-recovery/request`, {
-                method: "POST", headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ email: recoveryEmail }),
-              });
-              const body = await response.json().catch(() => null);
-              setBusy(false); setError(body?.message ?? "Unable to send verification code.");
-              if (response.ok) setRecoveryCodeSent(true);
-            }}>{busy ? "Sending..." : "Send Verification Code"}</button>}
-            {recoveryCodeSent && <>
-              <label>6-digit code<input inputMode="numeric" maxLength={6} value={recoveryCode}
-                onChange={event => setRecoveryCode(event.target.value.replace(/\D/g, ""))} /></label>
-              <label>New administrator password<input type="password" value={newPassword}
-                onChange={event => setNewPassword(event.target.value)} /></label>
-              <label>Repeat new password<input type="password" value={confirmRecoveryPassword}
-                onChange={event => setConfirmRecoveryPassword(event.target.value)} /></label>
-              <button type="button" disabled={busy || recoveryCode.length !== 6 || newPassword.length < 8 || newPassword !== confirmRecoveryPassword} onClick={async () => {
-                setBusy(true); setError("");
-                const response = await fetch(`${apiBaseUrl}/auth/administrator-recovery/confirm`, {
-                  method: "POST", headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ email: recoveryEmail, code: recoveryCode, newPassword }),
-                });
-                const body = await response.json().catch(() => null);
-                setBusy(false); setError(body?.message ?? "Unable to change administrator password.");
-                if (response.ok) {
-                  setUsername(recoveryEmail); setPassword(newPassword); setShowRecovery(false);
-                  setRecoveryCodeSent(false); setRecoveryCode(""); setConfirmRecoveryPassword("");
-                }
-              }}>{busy ? "Changing..." : "Change Administrator Password"}</button>
-              <button type="button" onClick={() => { setRecoveryCodeSent(false); setRecoveryCode(""); }}>
-                Send a new code
-              </button>
-            </>}
-          </>}
+          {showRecovery && <div className="warning-box">
+            <strong>Reset the password on the Office PC</strong>
+            <p>Open the Windows Start menu, select <strong>Fleet Safety Manager</strong>, then run <strong>Reset FSM Administrator Password</strong>.</p>
+            <p>Approve the Windows administrator prompt and enter the new password twice. Email and recovery codes are not required.</p>
+          </div>}
         </form>
       </div>
     );
@@ -1323,20 +1268,16 @@ function AdministrationDialog({ token, onClose, onSynchronizationDiagnostics }: 
   const [error, setError] = useState("");
   const [restoreFile, setRestoreFile] = useState<File | null>(null);
   const [retentionDays, setRetentionDays] = useState(365);
-  const [emailRecoveryConfigured, setEmailRecoveryConfigured] = useState(false);
-  const [googleAppPassword, setGoogleAppPassword] = useState("");
 
   async function load() {
-    const [overviewResponse, healthResponse, emailResponse] = await Promise.all([
+    const [overviewResponse, healthResponse] = await Promise.all([
       authFetch(`${apiBaseUrl}/administration/overview`, token, { cache: "no-store" }),
       authFetch(`${apiBaseUrl}/administration/health`, token, { cache: "no-store" }),
-      authFetch(`${apiBaseUrl}/administration/email-recovery`, token, { cache: "no-store" }),
     ]);
-    if (!overviewResponse.ok || !healthResponse.ok || !emailResponse.ok)
+    if (!overviewResponse.ok || !healthResponse.ok)
       throw new Error("Unable to load administration status.");
     setOverview(await overviewResponse.json());
     setHealth(await healthResponse.json());
-    setEmailRecoveryConfigured((await emailResponse.json()).configured);
   }
 
   useEffect(() => { void load().catch(exception => setError((exception as Error).message)); }, []);
@@ -1392,20 +1333,9 @@ function AdministrationDialog({ token, onClose, onSynchronizationDiagnostics }: 
         <div><span>Edition</span><strong>{overview?.edition ?? "—"}</strong></div>
         <div><span>Environment</span><strong>{overview?.environment ?? "—"}</strong></div>
         <div><span>Computer</span><strong>{overview?.machineName ?? "—"}</strong></div>
-      </div><hr/><h3>Administrator Email Recovery</h3>
-        <p>Recovery codes will be sent to <strong>baltnautic@gmail.com</strong> through Gmail.</p>
-        <p className="muted">Create a Google app password for Fleet Safety Manager. Do not use your normal Gmail password.</p>
-        <label>Google app password<input type="password" autoComplete="new-password"
-          placeholder={emailRecoveryConfigured ? "Configured — enter only to replace" : "16-character app password"}
-          value={googleAppPassword} onChange={event => setGoogleAppPassword(event.target.value)} /></label>
-        <button className="primary" disabled={busy || googleAppPassword.trim().length < 8}
-          onClick={() => action("/administration/email-recovery", { method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ administratorEmail: "baltnautic@gmail.com", appPassword: googleAppPassword })
-          }).then(() => setGoogleAppPassword(""))}>
-          Save and Send Test Email
-        </button>
-        <p><strong>Status:</strong> {emailRecoveryConfigured ? "Configured" : "Not configured"}</p>
+      </div><hr/><h3>Administrator Password Recovery</h3>
+        <p>On the Office PC, open the Windows Start menu and run <strong>Reset FSM Administrator Password</strong> from the Fleet Safety Manager folder.</p>
+        <p className="muted">Windows administrator approval is required. Gmail, verification codes and recovery keys are not used.</p>
         <hr/><p className="muted">Synchronization settings remain available from the Settings button in the main header.</p></section>}
       {tab === "backup" && <section><h3>Backup / Restore</h3>
         <p>Create a consistent database backup before updates or maintenance.</p>

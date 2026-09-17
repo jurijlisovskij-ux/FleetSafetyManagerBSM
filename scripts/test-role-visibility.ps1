@@ -263,14 +263,6 @@ try {
     } catch { [int]$_.Exception.Response.StatusCode }
     Assert-True ([int]$disabledStatus -eq 401) "Disabled user must not sign in."
 
-    $recoveryStatus = try {
-        Invoke-Json -Method Post -Uri "$baseUrl/api/auth/administrator-recovery/request" -Body @{
-            email = "admin@fsm.local"
-        } | Out-Null; 200
-    } catch { [int]$_.Exception.Response.StatusCode }
-    Assert-True ([int]$recoveryStatus -eq 503) `
-        "Email recovery must clearly require SMTP configuration."
-
     $balticVessel = Invoke-Json `
         -Method Post `
         -Uri "$baseUrl/api/vessels" `

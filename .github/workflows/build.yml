@@ -53,7 +53,6 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
           Set-Location frontend
-          $env:VITE_BUILD_NUMBER = "${{ github.run_number }}"
           npm ci
           npm run build
           Set-Location ..
@@ -129,6 +128,15 @@ jobs:
           }
 
           ./scripts/test-desktop-launcher.ps1
+          ./scripts/test-local-admin-reset.ps1
+
+          if ($publishedBundle -notmatch "Reset FSM Administrator Password") {
+            throw "Published application is missing the local administrator recovery instructions."
+          }
+          if ($publishedBundle -match "Google app password" -or
+              $publishedBundle -match "Send Verification Code") {
+            throw "Published application still contains the obsolete Gmail recovery UI."
+          }
 
       - name: Install Inno Setup
         shell: pwsh
@@ -139,8 +147,7 @@ jobs:
         run: |
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
             /DMyEdition=Office `
-            /DMyBuild=${{ github.run_number }} `
-            /DOutputBase=FleetSafetyManager_Office_Setup_Build${{ github.run_number }} `
+            /DOutputBase=FleetSafetyManager_Office_Setup `
             installer/FleetSafetyManager.iss
 
       - name: Build Ship installer
@@ -148,15 +155,14 @@ jobs:
         run: |
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
             /DMyEdition=Ship `
-            /DMyBuild=${{ github.run_number }} `
-            /DOutputBase=FleetSafetyManager_Ship_Setup_Build${{ github.run_number }} `
+            /DOutputBase=FleetSafetyManager_Ship_Setup `
             installer/FleetSafetyManager.iss
 
       - name: Verify installer files
         shell: pwsh
         run: |
-          $office = "installer/output/FleetSafetyManager_Office_Setup_Build${{ github.run_number }}.exe"
-          $ship = "installer/output/FleetSafetyManager_Ship_Setup_Build${{ github.run_number }}.exe"
+          $office = "installer/output/FleetSafetyManager_Office_Setup.exe"
+          $ship = "installer/output/FleetSafetyManager_Ship_Setup.exe"
           if (-not (Test-Path $office)) { throw "Office installer is missing." }
           if (-not (Test-Path $ship)) { throw "Ship installer is missing." }
           Get-FileHash $office -Algorithm SHA256
@@ -172,7 +178,7 @@ jobs:
 
           $release = Invoke-RestMethod `
             -Uri "https://api.github.com/repos/cloudflare/cloudflared/releases/latest" `
-            -Headers @{ "User-Agent" = "FleetSafetyManager-Build"; Authorization = "Bearer ${{ github.token }}" }
+            -Headers @{ "User-Agent" = "FleetSafetyManager-Build" }
           $asset = $release.assets | Where-Object {
             $_.name -eq "cloudflared-windows-amd64.exe"
           } | Select-Object -First 1
@@ -192,46 +198,42 @@ jobs:
           Copy-Item "pilot/*.ps1" $toolsRoot -Force
           Copy-Item "pilot/*.cmd" $toolsRoot -Force
           Copy-Item "pilot/README_RU.txt" $packageRoot -Force
-          Copy-Item "installer/output/FleetSafetyManager_Office_Setup_Build${{ github.run_number }}.exe" $packageRoot -Force
-          Copy-Item "installer/output/FleetSafetyManager_Ship_Setup_Build${{ github.run_number }}.exe" $packageRoot -Force
+          Copy-Item "installer/output/FleetSafetyManager_Office_Setup.exe" $packageRoot -Force
+          Copy-Item "installer/output/FleetSafetyManager_Ship_Setup.exe" $packageRoot -Force
 
           @(
             "$toolsRoot/Start-FSM-Remote-Pilot.ps1",
             "$toolsRoot/Connect-FSM-Ship-Pilot.ps1",
-            "$toolsRoot/Install-FSM-Ship-Pilot.ps1",
             "$toolsRoot/Stop-FSM-Remote-Pilot.ps1",
             "$toolsRoot/cloudflared.exe",
-            "$packageRoot/FleetSafetyManager_Office_Setup_Build${{ github.run_number }}.exe",
-            "$packageRoot/FleetSafetyManager_Ship_Setup_Build${{ github.run_number }}.exe"
+            "$packageRoot/FleetSafetyManager_Office_Setup.exe",
+            "$packageRoot/FleetSafetyManager_Ship_Setup.exe"
           ) | ForEach-Object {
             if (-not (Test-Path $_)) { throw "Remote Pilot package is incomplete: $_" }
           }
 
           $startScript = Get-Content "$toolsRoot/Start-FSM-Remote-Pilot.ps1" -Raw
           $shipScript = Get-Content "$toolsRoot/Connect-FSM-Ship-Pilot.ps1" -Raw
-          $installScript = Get-Content "$toolsRoot/Install-FSM-Ship-Pilot.ps1" -Raw
           if ($startScript -notmatch 'trycloudflare\\.com' -or
               $shipScript -notmatch 'OfficeBaseUrl' -or
-              $shipScript -notmatch 'AllowInsecureHttp' -or
-              $installScript -notmatch 'activation' -or
-              -not $installScript.Contains('Install FSM Ship.exe')) {
+              $shipScript -notmatch 'AllowInsecureHttp') {
             throw "Remote Pilot zero-configuration scripts failed validation."
           }
 
       - name: Upload installers
         uses: actions/upload-artifact@v4
         with:
-          name: FleetSafetyManager-RC20-Build${{ github.run_number }}-Windows-Installers
+          name: FleetSafetyManager-RC20-Windows-Installers
           path: |
-            installer/output/FleetSafetyManager_Office_Setup_Build${{ github.run_number }}.exe
-            installer/output/FleetSafetyManager_Ship_Setup_Build${{ github.run_number }}.exe
+            installer/output/FleetSafetyManager_Office_Setup.exe
+            installer/output/FleetSafetyManager_Ship_Setup.exe
           if-no-files-found: error
           retention-days: 7
 
       - name: Upload account-free remote pilot
         uses: actions/upload-artifact@v4
         with:
-          name: FleetSafetyManager-RC20-Build${{ github.run_number }}-Remote-Pilot
+          name: FleetSafetyManager-RC20-Remote-Pilot
           path: pilot/output/FSM_Remote_Pilot
           if-no-files-found: error
           retention-days: 7

@@ -11,7 +11,7 @@
 #endif
 
 #define AppName "Fleet Safety Manager"
-#define AppVersion "1.0.0-RC20." + MyBuild
+#define AppVersion "1.0.0-RC20"
 #define ServiceName "FleetSafetyManager"
 #define AppUrl "http://127.0.0.1:8080/"
 #define ReleaseName "RC20_" + MyBuild
@@ -47,6 +47,7 @@ Source: "..\publish\*"; DestDir: "{app}\Releases\{#ReleaseName}"; Flags: ignorev
 Source: "..\publish\FleetSafetyManagerLauncher.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "FleetSafetyManager.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "Launch Fleet Safety Manager.cmd"; DestDir: "{app}"; Flags: ignoreversion
+Source: "Reset-FSM-Administrator-Password.ps1"; DestDir: "{app}"; Flags: ignoreversion; Check: IsOfficeEdition
 
 [Dirs]
 Name: "{app}\Releases\{#ReleaseName}\Data"
@@ -62,6 +63,7 @@ Name: "{app}\Releases\{#ReleaseName}\Logs"
 [Icons]
 Name: "{autodesktop}\Fleet Safety Manager"; Filename: "{app}\FleetSafetyManagerLauncher.exe"; WorkingDir: "{app}"; IconFilename: "{app}\FleetSafetyManager.ico"; Comment: "Open Fleet Safety Manager {#MyEdition}"
 Name: "{group}\Fleet Safety Manager"; Filename: "{app}\FleetSafetyManagerLauncher.exe"; WorkingDir: "{app}"; IconFilename: "{app}\FleetSafetyManager.ico"; Comment: "Open Fleet Safety Manager {#MyEdition}"
+Name: "{group}\Reset FSM Administrator Password"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\Reset-FSM-Administrator-Password.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\FleetSafetyManager.ico"; Comment: "Reset the Office Administrator password"; Check: IsOfficeEdition
 Name: "{group}\Fleet Safety Manager Data"; Filename: "{app}"
 Name: "{group}\Uninstall Fleet Safety Manager"; Filename: "{uninstallexe}"
 

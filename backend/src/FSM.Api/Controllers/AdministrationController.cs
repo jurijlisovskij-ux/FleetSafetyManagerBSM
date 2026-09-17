@@ -17,51 +17,11 @@ namespace FSM.Api.Controllers;
 public sealed class AdministrationController(
     FsmDbContext db,
     IConfiguration configuration,
-    AuditService audit,
-    EmailRecoverySettingsStore emailSettings,
-    EmailSender emailSender) : ControllerBase
+    AuditService audit) : ControllerBase
 {
     private string DatabasePath => db.Database.GetDbConnection().DataSource;
     private string OperatorName => User.FindFirstValue(ClaimTypes.Name)
         ?? User.Identity?.Name ?? "Office administrator";
-
-    public sealed record SaveEmailRecoveryRequest(
-        string AdministratorEmail,
-        string AppPassword);
-
-    [HttpGet("email-recovery")]
-    public async Task<IActionResult> GetEmailRecovery(CancellationToken cancellationToken)
-    {
-        var adminEmail = await db.Users.AsNoTracking()
-            .Where(x => x.Role == FSM.Domain.Enums.UserRole.OfficeAdmin)
-            .Select(x => x.Email)
-            .SingleAsync(cancellationToken);
-        return Ok(new { administratorEmail = adminEmail, senderEmail = "baltnautic@gmail.com",
-            host = "smtp.gmail.com", port = 587, configured = emailSender.IsConfigured });
-    }
-
-    [HttpPost("email-recovery")]
-    public async Task<IActionResult> SaveEmailRecovery(
-        SaveEmailRecoveryRequest request,
-        CancellationToken cancellationToken)
-    {
-        if (!string.Equals(request.AdministratorEmail?.Trim(), "baltnautic@gmail.com", StringComparison.OrdinalIgnoreCase))
-            return BadRequest(new { message = "Administrator email must be baltnautic@gmail.com." });
-        if (string.IsNullOrWhiteSpace(request.AppPassword))
-            return BadRequest(new { message = "Enter the Google app password." });
-
-        emailSettings.Save(new EmailRecoverySettings("smtp.gmail.com", 587, true,
-            "baltnautic@gmail.com", request.AppPassword.Trim(), "baltnautic@gmail.com",
-            "Fleet Safety Manager"));
-        var admin = await db.Users.SingleAsync(x => x.Role == FSM.Domain.Enums.UserRole.OfficeAdmin,
-            cancellationToken);
-        admin.Email = "baltnautic@gmail.com";
-        await emailSender.SendAsync(admin.Email, "Fleet Safety Manager email recovery test",
-            "<p>Email recovery has been configured successfully.</p>", cancellationToken);
-        audit.Add("Administrator email recovery configured", OperatorName, admin.Username);
-        await db.SaveChangesAsync(cancellationToken);
-        return Ok(new { message = "Email recovery configured. Test email sent to baltnautic@gmail.com." });
-    }
 
     [HttpGet("overview")]
     public async Task<IActionResult> Overview(CancellationToken cancellationToken)
