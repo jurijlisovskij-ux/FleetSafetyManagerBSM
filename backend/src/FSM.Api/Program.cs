@@ -208,6 +208,7 @@ using (var scope = app.Services.CreateScope())
     await db.Database.EnsureCreatedAsync();
     await SchemaUpgrade.ApplyAsync(db);
     await SeedData.InitializeAsync(db);
+    await SeedData.EnsureEditionAccountsAsync(db, applicationEdition);
     await scope.ServiceProvider
         .GetRequiredService<SynchronizationProvisioningService>()
         .EnsureExistingInstallationsAsync();
