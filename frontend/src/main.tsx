@@ -544,7 +544,9 @@ function App() {
           }}
         >
           <h1>Fleet Safety Manager</h1>
-          <p><strong>{activationState.edition} Edition</strong></p>
+          <p><strong>{activationState.edition === "Ship"
+            ? "Ship Edition"
+            : "Office Edition"}</strong></p>
           {error && <div className="error">{error}</div>}
           <label>Username<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" /></label>
           <label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} /></label>
