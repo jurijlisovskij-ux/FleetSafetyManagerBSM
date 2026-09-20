@@ -71,7 +71,9 @@ jobs:
             "Waiting for Internet",
             "Pending changes",
             "Synchronize Now",
-            "Advanced Diagnostics"
+            "Advanced Diagnostics",
+            "Ship Edition",
+            "crew@fsm.local"
           ) | ForEach-Object {
             if ($bundle -notmatch [regex]::Escape($_)) {
               throw "Frontend bundle is missing the RC20-026 zero-configuration experience: $_"

@@ -64,7 +64,7 @@ public sealed class AuthController(
             return StatusCode(StatusCodes.Status403Forbidden, new
             {
                 message = isShipEdition
-                    ? "This account is not permitted to use the Ship edition."
+                    ? "This is an Office account. Sign in with a vessel Crew account."
                     : "This account is not permitted to use the Office edition."
             });
         }
