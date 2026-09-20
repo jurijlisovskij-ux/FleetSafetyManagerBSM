@@ -521,13 +521,21 @@ function App() {
           className="card"
           onSubmit={async event => {
             event.preventDefault();
+            const formData = new FormData(event.currentTarget);
+            const submittedUsername =
+              String(formData.get("username") ?? username);
+            const submittedPassword =
+              String(formData.get("password") ?? password);
             setBusy(true);
             setError("");
             try {
               const response = await fetch(`${apiBaseUrl}/auth/login`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ username, password }),
+                body: JSON.stringify({
+                  username: submittedUsername,
+                  password: submittedPassword,
+                }),
               });
 
               if (!response.ok) {
@@ -548,8 +556,8 @@ function App() {
             ? "Ship Edition"
             : "Office Edition"}</strong></p>
           {error && <div className="error">{error}</div>}
-          <label>Username<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" /></label>
-          <label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} /></label>
+          <label>Username<input name="username" value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" /></label>
+          <label>Password<input name="password" type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" /></label>
           <button className="primary" disabled={busy}>
             {busy ? "Signing in..." : "Sign In"}
           </button>
