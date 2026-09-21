@@ -584,9 +584,10 @@ function App() {
               ? user.role
               : `${user.fullName} · ${user.role}`}
           </span>
-          <button onClick={() => setShowSynchronization(true)}>
-            Settings
-          </button>
+          {user.edition !== "Ship" &&
+            <button onClick={() => setShowSynchronization(true)}>
+              Settings
+            </button>}
           {currentVessel && user.edition !== "Ship" &&
             <button
               onClick={() => {
@@ -853,7 +854,8 @@ function App() {
           </section>
           )}
 
-          <section className="dashboard-section">
+          {user.edition !== "Ship" &&
+            <section className="dashboard-section">
               <div className="dashboard-section-heading">
                 <h2>Synchronization Status</h2>
               </div>
@@ -894,7 +896,7 @@ function App() {
                   </tbody>
                 </table>
               </div>
-            </section>
+            </section>}
         </main>
       ) : (
         <main className="workspace">
@@ -1210,7 +1212,7 @@ function App() {
           }}
         />}
 
-      {showSynchronization &&
+      {showSynchronization && user.edition !== "Ship" &&
         <SettingsSynchronizationDialog
           token={user.token}
           userRole={user.role}
