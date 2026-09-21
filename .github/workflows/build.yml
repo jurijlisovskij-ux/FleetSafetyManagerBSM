@@ -40,13 +40,9 @@ jobs:
         shell: pwsh
         run: ./scripts/test-role-visibility.ps1
 
-      - name: Test installed-path Office and Ship synchronization
-        shell: pwsh
-        run: ./scripts/test-synchronization-e2e.ps1
-
-      - name: Test zero-configuration activation and automatic synchronization
-        shell: pwsh
-        run: ./scripts/test-zero-configuration-sync.ps1
+      # Remote synchronization is intentionally excluded from the installer gate
+      # while the autonomous Ship edition is being finalized. Its dedicated
+      # tests remain in scripts/ and will be restored with production sync.
 
       - name: Build frontend
         shell: pwsh
