@@ -39,6 +39,15 @@ if ($LASTEXITCODE -ne 0) {
     throw "Ship installer build failed with exit code $LASTEXITCODE."
 }
 
+Write-Host "Building personalized Figaro Ship installer..."
+& $iscc "/DMyEdition=Ship" "/DMyBuild=$buildId" `
+    "/DMyShipVesselId=f1841487-0000-4000-8000-000000000001" `
+    "/DMyShipVesselName=Figaro" "/DMyShipImoNumber=1841487" `
+    "/DOutputBase=FSM_Ship_Figaro_Setup" $installerScript
+if ($LASTEXITCODE -ne 0) {
+    throw "Personalized Figaro Ship installer build failed with exit code $LASTEXITCODE."
+}
+
 Write-Host ""
 Write-Host "RC20 build completed successfully."
 Write-Host "Installers: $(Join-Path $Root 'installer\output')"

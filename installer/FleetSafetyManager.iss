@@ -10,6 +10,18 @@
   #define MyBuild GetDateTimeString('yyyymmddhhnnss', '', '')
 #endif
 
+#ifndef MyShipVesselId
+  #define MyShipVesselId ""
+#endif
+
+#ifndef MyShipVesselName
+  #define MyShipVesselName ""
+#endif
+
+#ifndef MyShipImoNumber
+  #define MyShipImoNumber ""
+#endif
+
 #define AppName "Fleet Safety Manager"
 #define AppVersion "1.0.0-RC20"
 #define ServiceName "FleetSafetyManager"
@@ -22,7 +34,7 @@ AppName={#AppName} {#MyEdition}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#MyEdition} {#AppVersion}
 DefaultDirName={localappdata}\FleetSafetyManager
-UsePreviousAppDir=no
+UsePreviousAppDir=yes
 DefaultGroupName=Fleet Safety Manager
 OutputDir=output
 OutputBaseFilename={#OutputBase}
@@ -124,6 +136,22 @@ begin
     UpdatedConfigText := String(ConfigText);
     StringChangeEx(UpdatedConfigText, '"Edition": "Office"', '"Edition": "{#MyEdition}"', True);
     StringChangeEx(UpdatedConfigText, '"Edition": "Ship"', '"Edition": "{#MyEdition}"', True);
+    if '{#MyShipVesselId}' <> '' then
+    begin
+      StringChangeEx(UpdatedConfigText, '"ShipVesselId": ""',
+        '"ShipVesselId": "{#MyShipVesselId}"', True);
+      StringChangeEx(UpdatedConfigText, '"ShipVesselName": ""',
+        '"ShipVesselName": "{#MyShipVesselName}"', True);
+      StringChangeEx(UpdatedConfigText, '"ShipImoNumber": ""',
+        '"ShipImoNumber": "{#MyShipImoNumber}"', True);
+      { Early RC20 configuration files only contained ShipVesselId. Add the
+        remaining personalized identity fields when updating those installs. }
+      if Pos('"ShipVesselName"', UpdatedConfigText) = 0 then
+        StringChangeEx(UpdatedConfigText,
+          '"ShipVesselId": "{#MyShipVesselId}"',
+          '"ShipVesselId": "{#MyShipVesselId}", "ShipVesselName": "{#MyShipVesselName}", "ShipImoNumber": "{#MyShipImoNumber}"',
+          True);
+    end;
     { The packaged service listens on private-network HTTP; this internal flag is
       configured by the installer and is never exposed to ordinary users. }
     StringChangeEx(UpdatedConfigText, '"AllowInsecureHttp": false',

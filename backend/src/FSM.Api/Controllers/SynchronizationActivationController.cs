@@ -26,11 +26,32 @@ public sealed class SynchronizationActivationController(
     private readonly SynchronizationOptions options = options.Value;
     private readonly string edition =
         configuration["Application:Edition"] ?? "Office";
+    private readonly Guid? configuredShipVesselId = Guid.TryParse(
+        configuration["Application:ShipVesselId"],
+        out var shipVesselId)
+            ? shipVesselId
+            : null;
+    private readonly string? configuredShipImoNumber =
+        configuration["Application:ShipImoNumber"];
 
     [AllowAnonymous]
     [HttpGet("state")]
     public async Task<IActionResult> State(CancellationToken cancellationToken)
     {
+        var personalizedVessel = configuredShipVesselId.HasValue
+            ? await db.Vessels.AsNoTracking()
+                .Where(x => x.Id == configuredShipVesselId.Value ||
+                    (!string.IsNullOrWhiteSpace(configuredShipImoNumber) &&
+                     x.ImoNumber == configuredShipImoNumber))
+                .Select(x => new
+                {
+                    VesselId = x.Id,
+                    vesselName = x.VesselName,
+                    imoNumber = x.ImoNumber,
+                    LastSynchronizationUtc = (DateTime?)null
+                })
+                .FirstOrDefaultAsync(cancellationToken)
+            : null;
         var configured = await db.SynchronizationSettings
             .AsNoTracking()
             .Where(x => x.Enabled && x.RemoteBaseUrl != null &&
@@ -43,7 +64,7 @@ public sealed class SynchronizationActivationController(
                 x.LastSynchronizationUtc
             })
             .FirstOrDefaultAsync(cancellationToken);
-        var legacyVessels = configured is null
+        var legacyVessels = configured is null && personalizedVessel is null
             ? await db.Vessels.AsNoTracking()
                 .OrderBy(x => x.VesselName)
                 .Take(2)
@@ -65,8 +86,8 @@ public sealed class SynchronizationActivationController(
             requiresActivation = edition.Equals(
                 "Ship",
                 StringComparison.OrdinalIgnoreCase) &&
-                configured is null && legacyVessel is null,
-            vessel = configured ?? (object?)legacyVessel
+                configured is null && personalizedVessel is null && legacyVessel is null,
+            vessel = configured ?? (object?)personalizedVessel ?? legacyVessel
         });
     }
 
@@ -96,6 +117,36 @@ public sealed class SynchronizationActivationController(
     {
         if (!IsOffice())
             return NotFound();
+        try
+        {
+            var code = await provisioning.RegenerateActivationCodeAsync(
+                vesselId,
+                cancellationToken);
+            return Ok(new
+            {
+                activationCode = code,
+                expiresUtc = DateTime.UtcNow.AddDays(7)
+            });
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    [AllowAnonymous]
+    [HttpPost("pilot-code/{vesselId:guid}")]
+    public async Task<IActionResult> GenerateLocalPilotCode(
+        Guid vesselId,
+        CancellationToken cancellationToken)
+    {
+        if (!IsOffice())
+            return NotFound();
+
+        var remoteAddress = HttpContext.Connection.RemoteIpAddress;
+        if (remoteAddress is null || !IPAddress.IsLoopback(remoteAddress))
+            return NotFound();
+
         try
         {
             var code = await provisioning.RegenerateActivationCodeAsync(
@@ -167,36 +218,6 @@ public sealed class SynchronizationActivationController(
             setting.SynchronizationIdentity,
             tokens.GetOutboundToken(setting),
             24));
-    }
-
-    [AllowAnonymous]
-    [HttpPost("pilot-code/{vesselId:guid}")]
-    public async Task<IActionResult> GenerateLocalPilotCode(
-        Guid vesselId,
-        CancellationToken cancellationToken)
-    {
-        if (!IsOffice())
-            return NotFound();
-
-        var remoteAddress = HttpContext.Connection.RemoteIpAddress;
-        if (remoteAddress is null || !IPAddress.IsLoopback(remoteAddress))
-            return NotFound();
-
-        try
-        {
-            var code = await provisioning.RegenerateActivationCodeAsync(
-                vesselId,
-                cancellationToken);
-            return Ok(new
-            {
-                activationCode = code,
-                expiresUtc = DateTime.UtcNow.AddDays(7)
-            });
-        }
-        catch (KeyNotFoundException)
-        {
-            return NotFound();
-        }
     }
 
     [AllowAnonymous]

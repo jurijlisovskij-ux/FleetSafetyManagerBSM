@@ -19,6 +19,8 @@ public sealed class VesselAccessService(
         out var vesselId)
             ? vesselId
             : null;
+    private readonly string? configuredShipImoNumber =
+        configuration["Application:ShipImoNumber"];
 
     public async Task<IReadOnlyList<Vessel>?> GetAccessibleVesselsAsync(
         ClaimsPrincipal user,
@@ -47,6 +49,17 @@ public sealed class VesselAccessService(
             string.Equals(role, "Crew", StringComparison.OrdinalIgnoreCase))
         {
             var localVesselId = configuredShipVesselId;
+            if (localVesselId.HasValue &&
+                !await query.AnyAsync(
+                    x => x.Id == localVesselId.Value,
+                    cancellationToken) &&
+                !string.IsNullOrWhiteSpace(configuredShipImoNumber))
+            {
+                localVesselId = await query
+                    .Where(x => x.ImoNumber == configuredShipImoNumber)
+                    .Select(x => (Guid?)x.Id)
+                    .FirstOrDefaultAsync(cancellationToken);
+            }
             if (!localVesselId.HasValue)
             {
                 localVesselId = await db.SynchronizationSettings

@@ -52,6 +52,9 @@ public static class SeedData
     public static async Task EnsureEditionAccountsAsync(
         FsmDbContext db,
         string edition,
+        string? shipVesselId,
+        string? shipVesselName,
+        string? shipImoNumber,
         CancellationToken cancellationToken = default)
     {
         if (!edition.Equals("Ship", StringComparison.OrdinalIgnoreCase)) return;
@@ -92,6 +95,59 @@ public static class SeedData
             crew.IsDeleted = false;
             crew.IsLocked = false;
             crew.FailedLoginAttempts = 0;
+        }
+
+        if (Guid.TryParse(shipVesselId, out var configuredVesselId) &&
+            !string.IsNullOrWhiteSpace(shipVesselName) &&
+            !string.IsNullOrWhiteSpace(shipImoNumber))
+        {
+            var normalizedImo = shipImoNumber.Trim();
+            var vessel = await db.Vessels
+                .IgnoreQueryFilters()
+                .SingleOrDefaultAsync(
+                    x => x.Id == configuredVesselId,
+                    cancellationToken);
+
+            vessel ??= await db.Vessels
+                .IgnoreQueryFilters()
+                .SingleOrDefaultAsync(
+                    x => x.ImoNumber == normalizedImo,
+                    cancellationToken);
+
+            if (vessel is null)
+            {
+                vessel = new Vessel
+                {
+                    Id = configuredVesselId,
+                    VesselName = shipVesselName.Trim(),
+                    ImoNumber = normalizedImo
+                };
+                db.Vessels.Add(vessel);
+            }
+            else
+            {
+                vessel.VesselName = shipVesselName.Trim();
+                vessel.ImoNumber = normalizedImo;
+                vessel.IsDeleted = false;
+            }
+
+            var assignment = await db.UserVessels
+                .IgnoreQueryFilters()
+                .SingleOrDefaultAsync(
+                    x => x.UserId == crew.Id && x.VesselId == vessel.Id,
+                    cancellationToken);
+            if (assignment is null)
+            {
+                db.UserVessels.Add(new UserVessel
+                {
+                    UserId = crew.Id,
+                    VesselId = vessel.Id
+                });
+            }
+            else
+            {
+                assignment.IsDeleted = false;
+            }
         }
 
         await db.SaveChangesAsync(cancellationToken);

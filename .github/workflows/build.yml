@@ -160,15 +160,29 @@ jobs:
             /DOutputBase=FleetSafetyManager_Ship_Setup `
             installer/FleetSafetyManager.iss
 
+      - name: Build personalized Figaro Ship installer
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
+            /DMyEdition=Ship `
+            /DMyShipVesselId=f1841487-0000-4000-8000-000000000001 `
+            /DMyShipVesselName=Figaro `
+            /DMyShipImoNumber=1841487 `
+            /DOutputBase=FSM_Ship_Figaro_Setup `
+            installer/FleetSafetyManager.iss
+
       - name: Verify installer files
         shell: pwsh
         run: |
           $office = "installer/output/FleetSafetyManager_Office_Setup.exe"
           $ship = "installer/output/FleetSafetyManager_Ship_Setup.exe"
+          $figaro = "installer/output/FSM_Ship_Figaro_Setup.exe"
           if (-not (Test-Path $office)) { throw "Office installer is missing." }
           if (-not (Test-Path $ship)) { throw "Ship installer is missing." }
+          if (-not (Test-Path $figaro)) { throw "Personalized Figaro installer is missing." }
           Get-FileHash $office -Algorithm SHA256
           Get-FileHash $ship -Algorithm SHA256
+          Get-FileHash $figaro -Algorithm SHA256
 
       - name: Build account-free remote synchronization pilot
         shell: pwsh
@@ -233,6 +247,14 @@ jobs:
           path: |
             installer/output/FleetSafetyManager_Office_Setup.exe
             installer/output/FleetSafetyManager_Ship_Setup.exe
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Upload personalized Figaro Ship installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: FSM-Ship-Figaro-One-Click-Installer
+          path: installer/output/FSM_Ship_Figaro_Setup.exe
           if-no-files-found: error
           retention-days: 7
 
