@@ -135,7 +135,8 @@ public sealed class VesselsController(
             });
     }
 
-    [Authorize(Roles = "OfficeAdmin,Crew")]
+    // VesselAccessService is the single authorization source here. It allows
+    // Office administrators and limits Ship Crew to the configured vessel.
     [HttpPut("{vesselId:guid}")]
     public async Task<IActionResult> Update(
         Guid vesselId,
