@@ -579,7 +579,11 @@ function App() {
       <header className="topbar">
         <div><strong>Fleet Safety Manager</strong><span>Version RC20</span></div>
         <div className="session">
-          <span>{user.fullName} · {user.role}</span>
+          <span>
+            {user.edition === "Ship"
+              ? user.role
+              : `${user.fullName} · ${user.role}`}
+          </span>
           <button onClick={() => setShowSynchronization(true)}>
             Settings
           </button>
