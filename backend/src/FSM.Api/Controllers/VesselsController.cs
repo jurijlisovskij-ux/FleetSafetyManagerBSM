@@ -163,20 +163,41 @@ public sealed class VesselsController(
             // by the installer-bound IMO number instead of trusting a stale
             // route identifier. Authentication still limits Ship Edition to
             // the Crew role in Program.cs.
-            if (!User.IsInRole("Crew") ||
-                string.IsNullOrWhiteSpace(configuredShipImoNumber) ||
-                !string.Equals(
+            if (!User.IsInRole("Crew"))
+                return Forbid();
+
+            if (!string.IsNullOrWhiteSpace(configuredShipImoNumber))
+            {
+                if (!string.Equals(
                     imoNumber,
                     configuredShipImoNumber,
                     StringComparison.OrdinalIgnoreCase))
-            {
-                return Forbid();
-            }
+                {
+                    return Forbid();
+                }
 
-            vessel = await db.Vessels
-                .SingleOrDefaultAsync(
-                    x => x.ImoNumber == configuredShipImoNumber,
-                    cancellationToken);
+                vessel = await db.Vessels
+                    .SingleOrDefaultAsync(
+                        x => x.ImoNumber == configuredShipImoNumber,
+                        cancellationToken);
+            }
+            else
+            {
+                // Generic Ship installations created before personalized IMO
+                // binding continue to use their assigned vessel identifier.
+                if (!await vesselAccess.CanAccessVesselAsync(
+                    User,
+                    vesselId,
+                    cancellationToken))
+                {
+                    return Forbid();
+                }
+
+                vessel = await db.Vessels
+                    .SingleOrDefaultAsync(
+                        x => x.Id == vesselId,
+                        cancellationToken);
+            }
         }
         else
         {
