@@ -135,13 +135,21 @@ public sealed class VesselsController(
             });
     }
 
-    [Authorize(Roles = "OfficeAdmin")]
+    [Authorize(Roles = "OfficeAdmin,Crew")]
     [HttpPut("{vesselId:guid}")]
     public async Task<IActionResult> Update(
         Guid vesselId,
         SaveVesselRequest request,
         CancellationToken cancellationToken)
     {
+        if (!await vesselAccess.CanAccessVesselAsync(
+            User,
+            vesselId,
+            cancellationToken))
+        {
+            return Forbid();
+        }
+
         var vessel = await db.Vessels
             .SingleOrDefaultAsync(
                 x => x.Id == vesselId,

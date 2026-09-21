@@ -647,6 +647,24 @@ try {
         "Ship dashboard must retain Upcoming Inspections."
     Assert-True (@($crewDashboard.technicalSuperintendents).Count -eq 0) `
         "Technical Superintendents must not be returned to the Ship dashboard."
+
+    $updatedCrewVessel = Invoke-Json `
+        -Method Put `
+        -Uri "$baseUrl/api/vessels/$secondVesselId" `
+        -Headers $crewHeaders `
+        -Body @{
+            vesselName = $crewVessels[0].vesselName
+            imoNumber = $crewVessels[0].imoNumber
+            flag = "Latvia"
+            companyName = "Ship Edition Company"
+            invoicingDetails = "Ship profile update test"
+            accountingEmail = "accounts@example.test"
+        }
+    Assert-True (
+        $updatedCrewVessel.id -eq $secondVesselId -and
+        $updatedCrewVessel.invoicingDetails -eq "Ship profile update test") `
+        "Ship Crew must be able to update its own Vessel Profile."
+
     Assert-True (
         (Get-StatusCode `
             -Uri "$baseUrl/api/vessels/$balticVesselId/equipment" `
