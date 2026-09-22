@@ -159,13 +159,22 @@ jobs:
       - name: Build personalized Figaro Ship installer
         shell: pwsh
         run: |
-          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" `
-            /DMyEdition=Ship `
-            /DMyShipVesselId=f1841487-0000-4000-8000-000000000001 `
-            /DMyShipVesselName=Figaro `
-            /DMyShipImoNumber=1841487 `
-            /DOutputBase=FSM_Ship_Figaro_Setup `
-            installer/FleetSafetyManager.iss
+          $arguments = @(
+            "/DMyEdition=Ship",
+            "/DMyShipVesselId=f1841487-0000-4000-8000-000000000001",
+            "/DMyShipVesselName=Figaro",
+            "/DMyShipImoNumber=1841487",
+            "/DOutputBase=FSM_Ship_Figaro_Setup"
+          )
+          $officeUrl = '${{ vars.FSM_PRODUCTION_OFFICE_URL }}'.Trim().TrimEnd('/')
+          if ($officeUrl) {
+            if ($officeUrl -notmatch '^https://') {
+              throw 'FSM_PRODUCTION_OFFICE_URL must use HTTPS.'
+            }
+            $arguments += "/DMyOfficeBaseUrl=$officeUrl"
+          }
+          $arguments += "installer/FleetSafetyManager.iss"
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" @arguments
 
       - name: Verify installer files
         shell: pwsh
