@@ -38,6 +38,30 @@ internal advertised endpoint through deployment configuration. Plain HTTP is
 enabled by the packaged installer only because the bundled service endpoint is
 private-network HTTP. No HTTP/HTTPS choice appears in the application UI.
 
+## Production Internet endpoint
+
+For vessels outside the Office network, use one permanent HTTPS address. The
+recommended deployment is a named Cloudflare Tunnel whose public hostname maps
+to `http://localhost:8080` on the Office PC. A temporary `trycloudflare.com`
+address must not be used in production.
+
+After creating the named tunnel and public hostname, run the Office helper as
+Administrator. It stores only the public URL in FSM, installs Cloudflare Tunnel
+as an automatic Windows service, restarts both services, and verifies the
+public synchronization health endpoint:
+
+```powershell
+$token = Read-Host "Cloudflare tunnel token" -AsSecureString
+& "$env:LOCALAPPDATA\FleetSafetyManager\Install-FSM-Office-HTTPS.ps1" `
+  -PublicUrl "https://fsm.example.com" `
+  -TunnelToken $token
+```
+
+Set the GitHub Actions repository variable `FSM_PRODUCTION_OFFICE_URL` to the
+same HTTPS URL before building personalized Ship installers. The URL is then
+embedded in the Figaro installer; credentials remain vessel-specific and are
+issued through the one-time activation process.
+
 ## Advanced Diagnostics
 
 Only an authenticated Office Administrator can open
