@@ -916,7 +916,7 @@ function App() {
             setShowUserAdministration(false);
                 }}
               >
-                ← Assigned Vessels
+                ← Back
               </button>
               <h1>{currentVessel.vesselName}</h1>
               <p className="muted">
