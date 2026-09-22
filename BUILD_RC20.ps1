@@ -40,10 +40,23 @@ if ($LASTEXITCODE -ne 0) {
 }
 
 Write-Host "Building personalized Figaro Ship installer..."
-& $iscc "/DMyEdition=Ship" "/DMyBuild=$buildId" `
-    "/DMyShipVesselId=f1841487-0000-4000-8000-000000000001" `
-    "/DMyShipVesselName=Figaro" "/DMyShipImoNumber=1841487" `
-    "/DOutputBase=FSM_Ship_Figaro_Setup" $installerScript
+$figaroArguments = @(
+    "/DMyEdition=Ship",
+    "/DMyBuild=$buildId",
+    "/DMyShipVesselId=f1841487-0000-4000-8000-000000000001",
+    "/DMyShipVesselName=Figaro",
+    "/DMyShipImoNumber=1841487",
+    "/DOutputBase=FSM_Ship_Figaro_Setup"
+)
+if ($env:FSM_PRODUCTION_OFFICE_URL) {
+    $officeUrl = $env:FSM_PRODUCTION_OFFICE_URL.Trim().TrimEnd('/')
+    if ($officeUrl -notmatch '^https://') {
+        throw 'FSM_PRODUCTION_OFFICE_URL must use HTTPS.'
+    }
+    $figaroArguments += "/DMyOfficeBaseUrl=$officeUrl"
+}
+$figaroArguments += $installerScript
+& $iscc @figaroArguments
 if ($LASTEXITCODE -ne 0) {
     throw "Personalized Figaro Ship installer build failed with exit code $LASTEXITCODE."
 }
