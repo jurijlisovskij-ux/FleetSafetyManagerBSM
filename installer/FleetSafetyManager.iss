@@ -22,6 +22,10 @@
   #define MyShipImoNumber ""
 #endif
 
+#ifndef MyOfficeBaseUrl
+  #define MyOfficeBaseUrl ""
+#endif
+
 #define AppName "Fleet Safety Manager"
 #define AppVersion "1.0.0-RC20"
 #define ServiceName "FleetSafetyManager"
@@ -60,6 +64,7 @@ Source: "..\publish\FleetSafetyManagerLauncher.exe"; DestDir: "{app}"; Flags: ig
 Source: "FleetSafetyManager.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "Launch Fleet Safety Manager.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "Reset-FSM-Administrator-Password.ps1"; DestDir: "{app}"; Flags: ignoreversion; Check: IsOfficeEdition
+Source: "Install-FSM-Office-HTTPS.ps1"; DestDir: "{app}"; Flags: ignoreversion; Check: IsOfficeEdition
 
 [Dirs]
 Name: "{app}\Releases\{#ReleaseName}\Data"
@@ -152,10 +157,18 @@ begin
           '"ShipVesselId": "{#MyShipVesselId}", "ShipVesselName": "{#MyShipVesselName}", "ShipImoNumber": "{#MyShipImoNumber}"',
           True);
     end;
+    if (CompareText('{#MyEdition}', 'Ship') = 0) and
+       ('{#MyOfficeBaseUrl}' <> '') then
+    begin
+      StringChangeEx(UpdatedConfigText, '"OfficeBaseUrl": ""',
+        '"OfficeBaseUrl": "{#MyOfficeBaseUrl}"', True);
+    end;
     { The packaged service listens on private-network HTTP; this internal flag is
       configured by the installer and is never exposed to ordinary users. }
-    StringChangeEx(UpdatedConfigText, '"AllowInsecureHttp": false',
-      '"AllowInsecureHttp": true', True);
+    if (CompareText('{#MyEdition}', 'Office') = 0) or
+       (Pos('http://', Lowercase('{#MyOfficeBaseUrl}')) = 1) then
+      StringChangeEx(UpdatedConfigText, '"AllowInsecureHttp": false',
+        '"AllowInsecureHttp": true', True);
     if (Pos('"Edition": "{#MyEdition}"', UpdatedConfigText) = 0) or
        (not SaveStringToFile(ConfigPath, AnsiString(UpdatedConfigText), False)) then
       RaiseException('Could not configure the RC20 {#MyEdition} release.');
