@@ -2,6 +2,11 @@ name: Build FSM RC20 Windows Installers
 
 on:
   workflow_dispatch:
+    inputs:
+      office_url:
+        description: "Optional HTTPS Office URL embedded in the personalized Figaro installer"
+        required: false
+        type: string
   push:
     branches: [main, feature/ship-office-sync]
     paths:
@@ -40,9 +45,13 @@ jobs:
         shell: pwsh
         run: ./scripts/test-role-visibility.ps1
 
-      # Remote synchronization is intentionally excluded from the installer gate
-      # while the autonomous Ship edition is being finalized. Its dedicated
-      # tests remain in scripts/ and will be restored with production sync.
+      - name: Test installed-path Office and Ship synchronization
+        shell: pwsh
+        run: ./scripts/test-synchronization-e2e.ps1
+
+      - name: Test zero-configuration activation and automatic synchronization
+        shell: pwsh
+        run: ./scripts/test-zero-configuration-sync.ps1
 
       - name: Build frontend
         shell: pwsh
@@ -158,6 +167,9 @@ jobs:
 
       - name: Build personalized Figaro Ship installer
         shell: pwsh
+        env:
+          FSM_WORKFLOW_OFFICE_URL: ${{ inputs.office_url }}
+          FSM_PRODUCTION_OFFICE_URL: ${{ vars.FSM_PRODUCTION_OFFICE_URL }}
         run: |
           $arguments = @(
             "/DMyEdition=Ship",
@@ -166,7 +178,13 @@ jobs:
             "/DMyShipImoNumber=1841487",
             "/DOutputBase=FSM_Ship_Figaro_Setup"
           )
-          $officeUrl = '${{ vars.FSM_PRODUCTION_OFFICE_URL }}'.Trim().TrimEnd('/')
+          $officeUrl = if ($env:FSM_WORKFLOW_OFFICE_URL) {
+            $env:FSM_WORKFLOW_OFFICE_URL.Trim().TrimEnd('/')
+          } elseif ($env:FSM_PRODUCTION_OFFICE_URL) {
+            $env:FSM_PRODUCTION_OFFICE_URL.Trim().TrimEnd('/')
+          } else {
+            ''
+          }
           if ($officeUrl) {
             if ($officeUrl -notmatch '^https://') {
               throw 'FSM_PRODUCTION_OFFICE_URL must use HTTPS.'
@@ -185,6 +203,29 @@ jobs:
           if (-not (Test-Path $office)) { throw "Office installer is missing." }
           if (-not (Test-Path $ship)) { throw "Ship installer is missing." }
           if (-not (Test-Path $figaro)) { throw "Personalized Figaro installer is missing." }
+          $testConnectionScript = "installer/Configure-FSM-Test-Connection.ps1"
+          if (-not (Test-Path $testConnectionScript)) { throw "Test connection helper is missing." }
+          $parseTokens = $null
+          $parseErrors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $testConnectionScript),
+            [ref]$parseTokens,
+            [ref]$parseErrors
+          )
+          if ($parseErrors.Count -gt 0) {
+            throw "Test connection helper has PowerShell syntax errors: $($parseErrors -join '; ')"
+          }
+          $testConnectionText = Get-Content $testConnectionScript -Raw
+          @(
+            'funnel --bg --yes',
+            'FSM-Test-Connection-URL.txt',
+            'AdvertisedBaseUrl',
+            '/api/synchronization/health'
+          ) | ForEach-Object {
+            if ($testConnectionText -notmatch [regex]::Escape($_)) {
+              throw "Test connection helper is missing required behavior: $_"
+            }
+          }
           Get-FileHash $office -Algorithm SHA256
           Get-FileHash $ship -Algorithm SHA256
           Get-FileHash $figaro -Algorithm SHA256

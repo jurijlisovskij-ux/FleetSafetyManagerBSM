@@ -48,10 +48,15 @@ $figaroArguments = @(
     "/DMyShipImoNumber=1841487",
     "/DOutputBase=FSM_Ship_Figaro_Setup"
 )
-if ($env:FSM_PRODUCTION_OFFICE_URL) {
-    $officeUrl = $env:FSM_PRODUCTION_OFFICE_URL.Trim().TrimEnd('/')
+$configuredOfficeUrl = if ($env:FSM_TEST_OFFICE_URL) {
+    $env:FSM_TEST_OFFICE_URL
+} else {
+    $env:FSM_PRODUCTION_OFFICE_URL
+}
+if ($configuredOfficeUrl) {
+    $officeUrl = $configuredOfficeUrl.Trim().TrimEnd('/')
     if ($officeUrl -notmatch '^https://') {
-        throw 'FSM_PRODUCTION_OFFICE_URL must use HTTPS.'
+        throw 'The configured FSM Office URL must use HTTPS.'
     }
     $figaroArguments += "/DMyOfficeBaseUrl=$officeUrl"
 }

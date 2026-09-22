@@ -65,6 +65,7 @@ Source: "FleetSafetyManager.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "Launch Fleet Safety Manager.cmd"; DestDir: "{app}"; Flags: ignoreversion
 Source: "Reset-FSM-Administrator-Password.ps1"; DestDir: "{app}"; Flags: ignoreversion; Check: IsOfficeEdition
 Source: "Install-FSM-Office-HTTPS.ps1"; DestDir: "{app}"; Flags: ignoreversion; Check: IsOfficeEdition
+Source: "Configure-FSM-Test-Connection.ps1"; DestDir: "{app}"; Flags: ignoreversion; Check: IsOfficeEdition
 
 [Dirs]
 Name: "{app}\Releases\{#ReleaseName}\Data"
@@ -81,6 +82,7 @@ Name: "{app}\Releases\{#ReleaseName}\Logs"
 Name: "{autodesktop}\Fleet Safety Manager"; Filename: "{app}\FleetSafetyManagerLauncher.exe"; WorkingDir: "{app}"; IconFilename: "{app}\FleetSafetyManager.ico"; Comment: "Open Fleet Safety Manager {#MyEdition}"
 Name: "{group}\Fleet Safety Manager"; Filename: "{app}\FleetSafetyManagerLauncher.exe"; WorkingDir: "{app}"; IconFilename: "{app}\FleetSafetyManager.ico"; Comment: "Open Fleet Safety Manager {#MyEdition}"
 Name: "{group}\Reset FSM Administrator Password"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\Reset-FSM-Administrator-Password.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\FleetSafetyManager.ico"; Comment: "Reset the Office Administrator password"; Check: IsOfficeEdition
+Name: "{group}\Configure FSM Test Connection"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\Configure-FSM-Test-Connection.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\FleetSafetyManager.ico"; Comment: "Create the stable HTTPS test synchronization address"; Check: IsOfficeEdition
 Name: "{group}\Fleet Safety Manager Data"; Filename: "{app}"
 Name: "{group}\Uninstall Fleet Safety Manager"; Filename: "{uninstallexe}"
 
