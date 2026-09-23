@@ -83,10 +83,12 @@ public sealed class SynchronizationActivationController(
         return Ok(new
         {
             edition,
+            activated = configured is not null,
             requiresActivation = edition.Equals(
                 "Ship",
                 StringComparison.OrdinalIgnoreCase) &&
-                configured is null && personalizedVessel is null && legacyVessel is null,
+                configured is null &&
+                (personalizedVessel is not null || legacyVessel is null),
             vessel = configured ?? (object?)personalizedVessel ?? legacyVessel
         });
     }
