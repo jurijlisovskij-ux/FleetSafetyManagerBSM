@@ -93,8 +93,8 @@ $officeUrl = [Text.Encoding]::UTF8.GetString(
     [Convert]::FromBase64String($EncodedOfficeUrl)).TrimEnd('/')
 $activationCode = [Text.Encoding]::UTF8.GetString(
     [Convert]::FromBase64String($EncodedActivationCode))
-if ($officeUrl -notmatch '^https://[a-z0-9-]+\.trycloudflare\.com$') {
-    throw "The personalized Ship package contains an invalid temporary address."
+if ($officeUrl -notmatch '^https://') {
+    throw "The personalized Ship package contains an invalid secure Office address."
 }
 
 $config = Get-Content $configPath -Raw | ConvertFrom-Json
@@ -120,7 +120,7 @@ if ($null -eq $state) {
     throw "Fleet Safety Manager Ship did not start. Restart Windows and run this installer again."
 }
 
-if ($state.requiresActivation) {
+if (-not $state.activated) {
     $body = @{
         vesselId = $VesselId
         activationCode = $activationCode
