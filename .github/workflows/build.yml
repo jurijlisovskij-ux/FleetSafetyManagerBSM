@@ -225,6 +225,9 @@ jobs:
             'synchronizationAvailable',
             'Invoke-TailscaleCommand',
             'RedirectStandardError',
+            'WaitForExit',
+            'TimedOut',
+            '-WindowStyle Hidden',
             "'up', '--timeout=15s'"
           ) | ForEach-Object {
             if ($testConnectionText -notmatch [regex]::Escape($_)) {

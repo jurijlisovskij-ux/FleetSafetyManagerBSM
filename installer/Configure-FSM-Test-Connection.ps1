@@ -36,7 +36,10 @@ function Test-FsmSynchronizationHealth {
 }
 
 function Invoke-TailscaleCommand {
-    param([Parameter(Mandatory = $true)][string[]]$Arguments)
+    param(
+        [Parameter(Mandatory = $true)][string[]]$Arguments,
+        [ValidateRange(5, 300)][int]$TimeoutSeconds = 30
+    )
 
     $stdoutPath = Join-Path $env:TEMP ("fsm-tailscale-{0}.out" -f [guid]::NewGuid())
     $stderrPath = Join-Path $env:TEMP ("fsm-tailscale-{0}.err" -f [guid]::NewGuid())
@@ -46,12 +49,18 @@ function Invoke-TailscaleCommand {
             -ArgumentList $Arguments `
             -RedirectStandardOutput $stdoutPath `
             -RedirectStandardError $stderrPath `
-            -Wait `
+            -WindowStyle Hidden `
             -PassThru
+        $completed = $process.WaitForExit($TimeoutSeconds * 1000)
+        if (-not $completed) {
+            try { $process.Kill() } catch { }
+            try { $process.WaitForExit() } catch { }
+        }
         $stdout = if (Test-Path $stdoutPath) { Get-Content $stdoutPath -Raw } else { '' }
         $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { '' }
         return [pscustomobject]@{
-            ExitCode = $process.ExitCode
+            ExitCode = if ($completed) { $process.ExitCode } else { 124 }
+            TimedOut = (-not $completed)
             Output = (($stdout, $stderr) -join [Environment]::NewLine).Trim()
         }
     } finally {
@@ -181,7 +190,9 @@ try {
         Write-Host 'A browser window will open. Sign in to Tailscale once to continue.' -ForegroundColor Yellow
         # Do not let the CLI wait indefinitely for interactive browser sign-in.
         # It prints the authentication URL before this short timeout expires.
-        $loginResult = Invoke-TailscaleCommand -Arguments @('up', '--timeout=15s')
+        $loginResult = Invoke-TailscaleCommand `
+            -Arguments @('up', '--timeout=15s') `
+            -TimeoutSeconds 30
         $loginUrl = [regex]::Match($loginResult.Output, 'https://[^\s]+').Value.Trim()
         if ($loginUrl) {
             Start-Process $loginUrl
@@ -207,9 +218,9 @@ try {
     }
 
     Write-Host 'Enabling the permanent HTTPS test address...'
-    $funnelResult = Invoke-TailscaleCommand -Arguments @(
-        'funnel', '--bg', '--yes', 'http://127.0.0.1:8080'
-    )
+    $funnelResult = Invoke-TailscaleCommand `
+        -Arguments @('funnel', '--bg', '--yes', 'http://127.0.0.1:8080') `
+        -TimeoutSeconds 45
     if ($funnelResult.ExitCode -ne 0) {
         $approvalUrl = [regex]::Match($funnelResult.Output, 'https://[^\s]+').Value.Trim()
         if ($approvalUrl) {
@@ -218,12 +229,16 @@ try {
             if (-not $NoPause) {
                 [void](Read-Host 'After approval, press Enter to continue')
             }
-            $funnelResult = Invoke-TailscaleCommand -Arguments @(
-                'funnel', '--bg', '--yes', 'http://127.0.0.1:8080'
-            )
+            $funnelResult = Invoke-TailscaleCommand `
+                -Arguments @('funnel', '--bg', '--yes', 'http://127.0.0.1:8080') `
+                -TimeoutSeconds 45
         }
         if ($funnelResult.ExitCode -ne 0) {
-            throw "The HTTPS test address could not be enabled. $($funnelResult.Output)"
+            $funnelError = $funnelResult.Output
+            if ($funnelResult.TimedOut -and [string]::IsNullOrWhiteSpace($funnelError)) {
+                $funnelError = 'Tailscale did not finish enabling Funnel within 45 seconds. Open the Tailscale window, approve Funnel if requested, and run this shortcut again.'
+            }
+            throw "The HTTPS test address could not be enabled. $funnelError"
         }
     }
 
