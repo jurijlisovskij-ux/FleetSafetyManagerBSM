@@ -8,6 +8,8 @@ $cloudflared = Join-Path $pilotRoot "cloudflared.exe"
 $stateRoot = Join-Path $env:LOCALAPPDATA "FleetSafetyManager\RemotePilot"
 $logPath = Join-Path $stateRoot "cloudflared.log"
 $pidPath = Join-Path $stateRoot "cloudflared.pid"
+$testConnectionUrlPath = Join-Path $env:LOCALAPPDATA `
+    "FleetSafetyManager\FSM-Test-Connection-URL.txt"
 
 function Stop-PreviousTunnel {
     if (-not (Test-Path $pidPath)) { return }
@@ -45,6 +47,23 @@ function Get-OfficeCatalog {
     catch { return $null }
 }
 
+function Get-ConfiguredTestAddress {
+    if (-not (Test-Path $testConnectionUrlPath)) { return $null }
+    $candidate = (Get-Content $testConnectionUrlPath -Raw `
+        -ErrorAction SilentlyContinue).Trim().TrimEnd('/')
+    if ($candidate -notmatch '^https://') { return $null }
+    try {
+        $health = Invoke-RestMethod `
+            -Uri "$candidate/api/synchronization/health" `
+            -TimeoutSec 15
+        if ($health.databaseAvailable -and $health.synchronizationAvailable) {
+            return $candidate
+        }
+    }
+    catch { return $null }
+    return $null
+}
+
 if (-not (Test-Path $cloudflared)) {
     throw "cloudflared.exe is missing. Extract the complete Remote Pilot package before starting it."
 }
@@ -77,7 +96,14 @@ if ($vessels.Count -eq 1) {
 }
 
 New-Item -ItemType Directory -Path $stateRoot -Force | Out-Null
-$publicUrl = Get-ActiveTunnelUrl
+$publicUrl = Get-ConfiguredTestAddress
+if ($publicUrl) {
+    Write-Host ""
+    Write-Host "Using the configured secure test address." -ForegroundColor Green
+}
+if (-not $publicUrl) {
+    $publicUrl = Get-ActiveTunnelUrl
+}
 if ($publicUrl) {
     Write-Host ""
     Write-Host "Reusing the active secure Internet connection." -ForegroundColor Green
