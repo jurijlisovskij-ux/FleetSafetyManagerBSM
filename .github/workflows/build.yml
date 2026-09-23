@@ -217,12 +217,15 @@ jobs:
           }
           $testConnectionText = Get-Content $testConnectionScript -Raw
           @(
-            'funnel --bg --yes',
+            "'funnel', '--bg', '--yes'",
             'FSM-Test-Connection-URL.txt',
             'AdvertisedBaseUrl',
             '/api/synchronization/health',
             'databaseAvailable',
-            'synchronizationAvailable'
+            'synchronizationAvailable',
+            'Invoke-TailscaleCommand',
+            'RedirectStandardError',
+            "'up', '--timeout=15s'"
           ) | ForEach-Object {
             if ($testConnectionText -notmatch [regex]::Escape($_)) {
               throw "Test connection helper is missing required behavior: $_"

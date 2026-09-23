@@ -35,6 +35,30 @@ function Test-FsmSynchronizationHealth {
     }
 }
 
+function Invoke-TailscaleCommand {
+    param([Parameter(Mandatory = $true)][string[]]$Arguments)
+
+    $stdoutPath = Join-Path $env:TEMP ("fsm-tailscale-{0}.out" -f [guid]::NewGuid())
+    $stderrPath = Join-Path $env:TEMP ("fsm-tailscale-{0}.err" -f [guid]::NewGuid())
+    try {
+        $process = Start-Process `
+            -FilePath $tailscalePath `
+            -ArgumentList $Arguments `
+            -RedirectStandardOutput $stdoutPath `
+            -RedirectStandardError $stderrPath `
+            -Wait `
+            -PassThru
+        $stdout = if (Test-Path $stdoutPath) { Get-Content $stdoutPath -Raw } else { '' }
+        $stderr = if (Test-Path $stderrPath) { Get-Content $stderrPath -Raw } else { '' }
+        return [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            Output = (($stdout, $stderr) -join [Environment]::NewLine).Trim()
+        }
+    } finally {
+        Remove-Item $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 if (-not (Test-IsAdministrator)) {
     $arguments = @(
         '-NoProfile',
@@ -142,9 +166,9 @@ try {
 
     function Get-TailscaleStatus {
         try {
-            $statusText = (& $tailscalePath status --json 2>$null | Out-String).Trim()
-            if ($LASTEXITCODE -eq 0 -and $statusText) {
-                return ($statusText | ConvertFrom-Json)
+            $statusResult = Invoke-TailscaleCommand -Arguments @('status', '--json')
+            if ($statusResult.ExitCode -eq 0 -and $statusResult.Output) {
+                return ($statusResult.Output | ConvertFrom-Json)
             }
         } catch {
             return $null
@@ -155,10 +179,14 @@ try {
     $status = Get-TailscaleStatus
     if (-not $status -or $status.BackendState -ne 'Running') {
         Write-Host 'A browser window will open. Sign in to Tailscale once to continue.' -ForegroundColor Yellow
-        $loginOutput = (& $tailscalePath up 2>&1 | Out-String)
-        $loginUrl = [regex]::Match($loginOutput, 'https://[^\s]+').Value.Trim()
+        # Do not let the CLI wait indefinitely for interactive browser sign-in.
+        # It prints the authentication URL before this short timeout expires.
+        $loginResult = Invoke-TailscaleCommand -Arguments @('up', '--timeout=15s')
+        $loginUrl = [regex]::Match($loginResult.Output, 'https://[^\s]+').Value.Trim()
         if ($loginUrl) {
             Start-Process $loginUrl
+        } elseif ($loginResult.ExitCode -ne 0) {
+            throw "Tailscale sign-in could not start. $($loginResult.Output)"
         }
 
         $loginDeadline = (Get-Date).AddMinutes(5)
@@ -173,25 +201,29 @@ try {
         }
     }
 
-    & $tailscalePath set --hostname=$MachineName | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw 'The stable test computer name could not be configured.'
+    $hostnameResult = Invoke-TailscaleCommand -Arguments @('set', "--hostname=$MachineName")
+    if ($hostnameResult.ExitCode -ne 0) {
+        throw "The stable test computer name could not be configured. $($hostnameResult.Output)"
     }
 
     Write-Host 'Enabling the permanent HTTPS test address...'
-    $funnelOutput = (& $tailscalePath funnel --bg --yes http://127.0.0.1:8080 2>&1 | Out-String)
-    if ($LASTEXITCODE -ne 0) {
-        $approvalUrl = [regex]::Match($funnelOutput, 'https://[^\s]+').Value.Trim()
+    $funnelResult = Invoke-TailscaleCommand -Arguments @(
+        'funnel', '--bg', '--yes', 'http://127.0.0.1:8080'
+    )
+    if ($funnelResult.ExitCode -ne 0) {
+        $approvalUrl = [regex]::Match($funnelResult.Output, 'https://[^\s]+').Value.Trim()
         if ($approvalUrl) {
             Write-Host 'Approve Funnel in the browser window, then return here.' -ForegroundColor Yellow
             Start-Process $approvalUrl
             if (-not $NoPause) {
                 [void](Read-Host 'After approval, press Enter to continue')
             }
-            $funnelOutput = (& $tailscalePath funnel --bg --yes http://127.0.0.1:8080 2>&1 | Out-String)
+            $funnelResult = Invoke-TailscaleCommand -Arguments @(
+                'funnel', '--bg', '--yes', 'http://127.0.0.1:8080'
+            )
         }
-        if ($LASTEXITCODE -ne 0) {
-            throw "The HTTPS test address could not be enabled. $($funnelOutput.Trim())"
+        if ($funnelResult.ExitCode -ne 0) {
+            throw "The HTTPS test address could not be enabled. $($funnelResult.Output)"
         }
     }
 
@@ -240,7 +272,14 @@ try {
 } catch {
     Write-Host ''
     Write-Host 'FSM test connection setup failed:' -ForegroundColor Red
-    Write-Host $_.Exception.Message -ForegroundColor Red
+    $errorMessage = $_.Exception.Message
+    if ([string]::IsNullOrWhiteSpace($errorMessage)) {
+        $errorMessage = ($_ | Out-String).Trim()
+    }
+    if ([string]::IsNullOrWhiteSpace($errorMessage)) {
+        $errorMessage = 'An unexpected error occurred. Run the setup again.'
+    }
+    Write-Host $errorMessage -ForegroundColor Red
     Write-Host ''
     Wait-ForEnter
     exit 1
