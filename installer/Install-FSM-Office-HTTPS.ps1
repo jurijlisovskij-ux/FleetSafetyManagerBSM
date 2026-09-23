@@ -10,6 +10,18 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
+function Test-FsmSynchronizationHealth {
+    param([Parameter(Mandatory = $true)][string]$Uri)
+    try {
+        $health = Invoke-RestMethod -Uri $Uri -TimeoutSec 10
+        return ($health.applicationEdition -eq 'Office' -and
+                $health.databaseAvailable -eq $true -and
+                $health.synchronizationAvailable -eq $true)
+    } catch {
+        return $false
+    }
+}
+
 $appRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $currentFile = Join-Path $appRoot 'current.txt'
 if (-not (Test-Path $currentFile)) {
@@ -67,15 +79,11 @@ Restart-Service -Name 'cloudflared'
 
 $deadline = (Get-Date).AddSeconds(45)
 do {
-    try {
-        $health = Invoke-RestMethod -Uri "$normalizedUrl/api/synchronization/health" -TimeoutSec 10
-        if ($health.status -eq 'ok') {
-            Write-Host "FSM production synchronization is ready: $normalizedUrl" -ForegroundColor Green
-            exit 0
-        }
-    } catch {
-        Start-Sleep -Seconds 3
+    if (Test-FsmSynchronizationHealth -Uri "$normalizedUrl/api/synchronization/health") {
+        Write-Host "FSM production synchronization is ready: $normalizedUrl" -ForegroundColor Green
+        exit 0
     }
+    Start-Sleep -Seconds 3
 } while ((Get-Date) -lt $deadline)
 
 throw "The HTTPS endpoint did not become available: $normalizedUrl"

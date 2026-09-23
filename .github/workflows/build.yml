@@ -220,11 +220,16 @@ jobs:
             'funnel --bg --yes',
             'FSM-Test-Connection-URL.txt',
             'AdvertisedBaseUrl',
-            '/api/synchronization/health'
+            '/api/synchronization/health',
+            'databaseAvailable',
+            'synchronizationAvailable'
           ) | ForEach-Object {
             if ($testConnectionText -notmatch [regex]::Escape($_)) {
               throw "Test connection helper is missing required behavior: $_"
             }
+          }
+          if ($testConnectionText -match '\$health\.status') {
+            throw 'Test connection helper validates the obsolete health response contract.'
           }
           Get-FileHash $office -Algorithm SHA256
           Get-FileHash $ship -Algorithm SHA256

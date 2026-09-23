@@ -23,6 +23,18 @@ function Wait-ForEnter {
     }
 }
 
+function Test-FsmSynchronizationHealth {
+    param([Parameter(Mandatory = $true)][string]$Uri)
+    try {
+        $health = Invoke-RestMethod -Uri $Uri -TimeoutSec 10
+        return ($health.applicationEdition -eq 'Office' -and
+                $health.databaseAvailable -eq $true -and
+                $health.synchronizationAvailable -eq $true)
+    } catch {
+        return $false
+    }
+}
+
 if (-not (Test-IsAdministrator)) {
     $arguments = @(
         '-NoProfile',
@@ -61,8 +73,15 @@ try {
     Write-Host ''
     Write-Host 'Fleet Safety Manager - Test Connection' -ForegroundColor Cyan
     Write-Host 'Checking the Office application...'
-    $localHealth = Invoke-RestMethod -Uri 'http://127.0.0.1:8080/api/synchronization/health' -TimeoutSec 10
-    if ($localHealth.status -ne 'ok') {
+    Set-Service -Name 'FleetSafetyManager' -StartupType Automatic
+    Restart-Service -Name 'FleetSafetyManager' -Force
+    $localHealthUri = 'http://127.0.0.1:8080/api/synchronization/health'
+    $localDeadline = (Get-Date).AddSeconds(60)
+    do {
+        $localReady = Test-FsmSynchronizationHealth -Uri $localHealthUri
+        if (-not $localReady) { Start-Sleep -Seconds 2 }
+    } while (-not $localReady -and (Get-Date) -lt $localDeadline)
+    if (-not $localReady) {
         throw 'The local Fleet Safety Manager synchronization service is not ready.'
     }
 
@@ -197,12 +216,7 @@ try {
     $deadline = (Get-Date).AddSeconds(60)
     $publicReady = $false
     do {
-        try {
-            $health = Invoke-RestMethod -Uri "$publicUrl/api/synchronization/health" -TimeoutSec 10
-            $publicReady = $health.status -eq 'ok'
-        } catch {
-            $publicReady = $false
-        }
+        $publicReady = Test-FsmSynchronizationHealth -Uri "$publicUrl/api/synchronization/health"
         if (-not $publicReady) { Start-Sleep -Seconds 3 }
     } while (-not $publicReady -and (Get-Date) -lt $deadline)
 
