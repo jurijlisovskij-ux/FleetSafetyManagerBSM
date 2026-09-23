@@ -293,10 +293,13 @@ jobs:
           $shipInstallerScript = Get-Content "$toolsRoot/Install-FSM-Ship-Pilot.ps1" -Raw
           if ($startScript -notmatch 'trycloudflare\\.com' -or
               $startScript -notmatch 'Get-ActiveTunnelUrl' -or
+              $startScript -notmatch 'Get-ConfiguredTestAddress' -or
+              $startScript -notmatch 'FSM-Test-Connection-URL.txt' -or
               $startScript -notmatch [regex]::Escape('FleetSafetyManager_Ship_Setup*.exe') -or
               $shipScript -notmatch 'OfficeBaseUrl' -or
               $shipScript -notmatch 'AllowInsecureHttp' -or
-              $shipInstallerScript -notmatch 'administrator approval was cancelled') {
+              $shipInstallerScript -notmatch 'administrator approval was cancelled' -or
+              $shipInstallerScript -notmatch [regex]::Escape('if (-not $state.activated)')) {
             throw "Remote Pilot zero-configuration scripts failed validation."
           }
 
