@@ -182,6 +182,8 @@ jobs:
             $env:FSM_WORKFLOW_OFFICE_URL.Trim().TrimEnd('/')
           } elseif ($env:FSM_PRODUCTION_OFFICE_URL) {
             $env:FSM_PRODUCTION_OFFICE_URL.Trim().TrimEnd('/')
+          } elseif (Test-Path 'installer/Figaro-Office-Url.txt') {
+            (Get-Content 'installer/Figaro-Office-Url.txt' -Raw).Trim().TrimEnd('/')
           } else {
             ''
           }
@@ -190,6 +192,7 @@ jobs:
               throw 'FSM_PRODUCTION_OFFICE_URL must use HTTPS.'
             }
             $arguments += "/DMyOfficeBaseUrl=$officeUrl"
+            Write-Host "Embedding the Figaro Office synchronization address: $officeUrl"
           }
           $arguments += "installer/FleetSafetyManager.iss"
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" @arguments
