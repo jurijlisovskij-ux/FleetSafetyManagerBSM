@@ -718,3 +718,226 @@ public sealed class SynchronizationController(
         }
         catch (InvalidDataException exception)
         {
+            return BadRequest(new { message = exception.Message });
+        }
+    }
+
+    [AllowAnonymous]
+    [HttpGet("files/chunk")]
+    public async Task<IActionResult> DownloadChunk(
+        Guid vesselId,
+        string path,
+        long size,
+        string checksum,
+        DateTime lastModifiedUtc,
+        long offset,
+        string version,
+        CancellationToken cancellationToken)
+    {
+        var validation = await ValidatePeerAsync(
+            vesselId,
+            version,
+            cancellationToken);
+        if (validation is not null)
+            return validation;
+        var vessel = await db.Vessels.SingleAsync(
+            x => x.Id == vesselId,
+            cancellationToken);
+        try
+        {
+            var content = await files.ReadChunkAsync(
+                vessel,
+                new SynchronizationFileItem(
+                    path,
+                    size,
+                    checksum,
+                    lastModifiedUtc),
+                offset,
+                cancellationToken);
+            return File(content, "application/octet-stream");
+        }
+        catch (FileNotFoundException)
+        {
+            return NotFound();
+        }
+        catch (InvalidDataException exception)
+        {
+            return BadRequest(new { message = exception.Message });
+        }
+    }
+
+    private async Task<IActionResult?> ValidatePeerAsync(
+        Guid vesselId,
+        string version,
+        CancellationToken cancellationToken)
+    {
+        var setting = await db.SynchronizationSettings.AsNoTracking()
+            .SingleOrDefaultAsync(x => x.VesselId == vesselId, cancellationToken);
+        var allowHttp = options.AllowInsecureHttp ||
+            (setting?.AllowInsecureHttp ?? false);
+        if (!Request.IsHttps && !allowHttp)
+        {
+            return StatusCode(
+                StatusCodes.Status426UpgradeRequired,
+                new { message = "Synchronization requires HTTPS." });
+        }
+        if (setting is null || !setting.Enabled)
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                message = "Synchronization is not enabled for this vessel."
+            });
+        if (!string.Equals(
+            version,
+            options.ApplicationVersion,
+            StringComparison.Ordinal))
+        {
+            return Conflict(new
+            {
+                message =
+                    $"Application version mismatch. Expected " +
+                    $"{options.ApplicationVersion}."
+            });
+        }
+
+        var token = Request.Headers[
+            SynchronizationTokenService.HeaderName].FirstOrDefault();
+        if (!await tokens.ValidateAsync(
+            vesselId,
+            token,
+            cancellationToken))
+        {
+            return Unauthorized(new
+            {
+                message = "The vessel synchronization token is invalid."
+            });
+        }
+
+        var vesselExists = await db.Vessels
+            .AnyAsync(x => x.Id == vesselId, cancellationToken);
+        return vesselExists ? null : NotFound();
+    }
+
+    private async Task<IActionResult> SaveShipConfigurationAsync(
+        ShipSynchronizationConfiguration imported,
+        CancellationToken cancellationToken)
+    {
+        if (!string.Equals(imported.RequiredApplicationVersion,
+            options.ApplicationVersion, StringComparison.Ordinal))
+            return Conflict(new { message = $"Application version mismatch. Expected {options.ApplicationVersion}." });
+        if (imported.AutomaticIntervalHours is not (0 or 6 or 12 or 24))
+            return BadRequest(new { message = "Interval must be Manual only, 6, 12 or 24 hours." });
+        var configuredShipId = configuration["Application:ShipVesselId"];
+        if (!Guid.TryParse(configuredShipId, out var localVesselId) ||
+            localVesselId != imported.VesselId)
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                message = "The configuration belongs to a different vessel than this Ship installation."
+            });
+        var vessel = await db.Vessels.AsNoTracking().SingleOrDefaultAsync(
+            x => x.Id == localVesselId, cancellationToken);
+        if (vessel is null || !string.Equals(vessel.ImoNumber,
+            imported.VesselImo?.Trim(), StringComparison.OrdinalIgnoreCase))
+            return StatusCode(StatusCodes.Status403Forbidden, new
+            {
+                message = "The configuration vessel ID or IMO does not match this Ship installation."
+            });
+        if (!Uri.TryCreate(imported.OfficeEndpointUrl?.Trim(), UriKind.Absolute, out var endpoint) ||
+            (!endpoint.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase) &&
+             !(imported.AllowInsecureHttp && endpoint.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase))))
+            return BadRequest(new
+            {
+                message = "The Office endpoint must use HTTPS unless local HTTP test mode is explicitly enabled."
+            });
+        var setting = await tokens.GetOrCreateSettingAsync(localVesselId, cancellationToken);
+        setting.RemoteBaseUrl = endpoint.ToString().TrimEnd('/');
+        setting.AutomaticIntervalHours = imported.AutomaticIntervalHours;
+        setting.AllowInsecureHttp = imported.AllowInsecureHttp;
+        setting.Enabled = true;
+        setting.LastError = null;
+        setting.CurrentStage = "Configuration saved.";
+        tokens.SetOutboundToken(setting, imported.SynchronizationToken);
+        await db.SaveChangesAsync(cancellationToken);
+        return Ok(new
+        {
+            vesselId = vessel.Id,
+            vessel = vessel.VesselName,
+            vesselImo = vessel.ImoNumber,
+            officeEndpointUrl = setting.RemoteBaseUrl,
+            setting.AutomaticIntervalHours,
+            setting.AllowInsecureHttp
+        });
+    }
+
+    private static string SafeError(Exception exception)
+    {
+        var message = exception.Message;
+        try
+        {
+            using var json = JsonDocument.Parse(message);
+            if (json.RootElement.TryGetProperty("message", out var property))
+                return property.GetString() ?? message;
+        }
+        catch (JsonException)
+        {
+        }
+        return message;
+    }
+
+    private static async Task WriteZipEntryAsync(
+        ZipArchive archive,
+        string name,
+        string content,
+        CancellationToken cancellationToken)
+    {
+        var entry = archive.CreateEntry(name, CompressionLevel.Optimal);
+        await using var stream = entry.Open();
+        await using var writer = new StreamWriter(stream, new UTF8Encoding(false));
+        await writer.WriteAsync(content.AsMemory(), cancellationToken);
+    }
+
+    private async Task<string> GetIntegrityCheckAsync(
+        CancellationToken cancellationToken)
+    {
+        await db.Database.OpenConnectionAsync(cancellationToken);
+        try
+        {
+            await using var command = db.Database.GetDbConnection().CreateCommand();
+            command.CommandText = "PRAGMA integrity_check;";
+            return Convert.ToString(await command.ExecuteScalarAsync(cancellationToken)) ?? "unknown";
+        }
+        finally
+        {
+            await db.Database.CloseConnectionAsync();
+        }
+    }
+
+    private static async Task<string> GetFirewallStatusAsync(
+        CancellationToken cancellationToken)
+    {
+        if (!OperatingSystem.IsWindows())
+            return "Windows Firewall status is not applicable on this operating system.";
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = "netsh.exe",
+                Arguments = "advfirewall firewall show rule name=\"Fleet Safety Manager Office Synchronization\"",
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true
+            };
+            using var process = Process.Start(startInfo)
+                ?? throw new InvalidOperationException("Unable to query Windows Firewall.");
+            var output = await process.StandardOutput.ReadToEndAsync(cancellationToken);
+            var error = await process.StandardError.ReadToEndAsync(cancellationToken);
+            await process.WaitForExitAsync(cancellationToken);
+            return string.IsNullOrWhiteSpace(output) ? error : output;
+        }
+        catch (Exception exception)
+        {
+            return $"Windows Firewall query failed safely: {exception.Message}";
+        }
+    }
+
+}
