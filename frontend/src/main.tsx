@@ -3798,3 +3798,751 @@ function ServiceRequestDialog({
         disposition?.match(
           /filename\*?=(?:UTF-8''|"?)([^";]+)/i,
         );
+
+      const contentType =
+        response.headers.get("Content-Type") ?? "";
+
+      const fileName = fileNameMatch
+        ? decodeURIComponent(
+            fileNameMatch[1].replace(/"/g, ""),
+          )
+        : contentType.includes("application/zip")
+          ? "Service Request.zip"
+          : "Service Request.xlsx";
+
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+
+      onGenerated();
+    } catch (exception) {
+      setRequestError(
+        (exception as Error).message,
+      );
+    } finally {
+      setRequestBusy(false);
+    }
+  }
+
+  return (
+    <div className="modal">
+      <div className="service-request-dialog">
+        <div className="service-request-header">
+          <div>
+            <h2>Generate Service Request</h2>
+            <p>
+              {vessel.vesselName} · IMO {vessel.imoNumber}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+          >
+            Close
+          </button>
+        </div>
+
+        {requestError &&
+          <div className="error">
+            {requestError}
+          </div>}
+
+        <div className="service-request-form">
+          <label>
+            Port
+            <input
+              value={port}
+              onChange={event =>
+                setPort(event.target.value)}
+            />
+          </label>
+
+          <label>
+            ETA
+            <input
+              type="date"
+              value={eta}
+              onChange={event =>
+                setEta(event.target.value)}
+            />
+          </label>
+
+          <label>
+            ETD
+            <input
+              type="date"
+              value={etd}
+              onChange={event =>
+                setEtd(event.target.value)}
+            />
+          </label>
+
+          <label className="wide-field">
+            Remarks
+            <textarea
+              rows={5}
+              value={remarks}
+              onChange={event =>
+                setRemarks(event.target.value)}
+            />
+          </label>
+
+          <div className="attachments-block wide-field">
+            <span>Attachments</span>
+
+            <label className="attachment-option">
+              <input
+                type="checkbox"
+                checked={includeCertificates}
+                onChange={event =>
+                  setIncludeCertificates(
+                    event.target.checked,
+                  )}
+              />
+              Include Previous Certificates
+            </label>
+
+            <label className="attachment-option">
+              <input
+                type="checkbox"
+                checked={includeReports}
+                onChange={event =>
+                  setIncludeReports(
+                    event.target.checked,
+                  )}
+              />
+              Include Previous Reports
+            </label>
+
+            <small>
+              Nothing is attached unless you select it.
+              Missing documents will be skipped.
+            </small>
+          </div>
+
+        </div>
+
+        <h3>
+          Selected Equipment ({selectedEquipment.length})
+        </h3>
+
+        <div className="selected-equipment-list">
+          {selectedEquipment.map(item => (
+            <div
+              className="selected-equipment-item"
+              key={item.id}
+            >
+              <strong>{item.equipmentName}</strong>
+              <span>
+                {item.category}
+                {item.maker ? ` · ${item.maker}` : ""}
+                {item.model ? ` · ${item.model}` : ""}
+                {item.quantity > 1
+                  ? ` · Qty ${item.quantity}`
+                  : ""}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        <div className="service-request-actions">
+          <button
+            type="button"
+            disabled={requestBusy}
+            onClick={onClose}
+          >
+            Cancel
+          </button>
+
+          <button
+            type="button"
+            className="primary"
+            disabled={requestBusy}
+            onClick={generate}
+          >
+            {requestBusy
+              ? "Generating..."
+              : includeCertificates || includeReports
+                ? "Generate ZIP"
+                : "Generate Excel"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EquipmentDetails({
+  item,
+  token,
+  vesselId,
+  onSaved,
+  onDeleted,
+  onDocumentsChanged,
+}: {
+  item: Equipment;
+  token: string;
+  vesselId: string;
+  onSaved: (item: Equipment) => void;
+  onDeleted: (id: string) => void;
+  onDocumentsChanged: () => Promise<void>;
+}) {
+  const [draft, setDraft] = useState(item);
+  const [editing, setEditing] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  const update = <K extends keyof Equipment>(key: K, value: Equipment[K]) =>
+    setDraft(current => ({ ...current, [key]: value }));
+
+  const editableKeys: (keyof Equipment)[] = [
+    "category", "equipmentName", "maker", "model", "serialNumber",
+    "quantity", "inspectionBy", "expiryDate", "remarks",
+  ];
+  const hasChanges = editableKeys.some(key =>
+    (draft[key] ?? "") !== (item[key] ?? ""),
+  );
+
+  return (
+    <form
+      onSubmit={async event => {
+        event.preventDefault();
+        if (!draft.equipmentName.trim()) {
+          setError("Equipment Name is required.");
+          return;
+        }
+        if (draft.quantity < 1) {
+          setError("Quantity must be greater than zero.");
+          return;
+        }
+        if (draft.expiryDate && !isValidDateInput(draft.expiryDate)) {
+          setError("Enter a valid Expiry Date.");
+          return;
+        }
+
+        setBusy(true);
+        setError("");
+        try {
+          const response = await authFetch(
+            `${apiBaseUrl}/vessels/${vesselId}/equipment/${draft.id}`,
+            token,
+            {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                category: categoryToApi(draft.category),
+                equipmentName: draft.equipmentName,
+                maker: draft.maker || null,
+                model: draft.model || null,
+                serialNumber: draft.serialNumber || null,
+                quantity: draft.quantity,
+                inspectionBy: inspectionToApi(draft.inspectionBy),
+                expiryDate: draft.expiryDate || null,
+                responsible: draft.responsible?.trim() || null,
+                remarks: draft.remarks || null,
+              }),
+            },
+          );
+
+          if (!response.ok) {
+            const body = await response.json().catch(() => null);
+            throw new Error(body?.message ?? "Unable to save equipment.");
+          }
+
+          const saved: Equipment = await response.json();
+          onSaved(saved);
+          setDraft(saved);
+          setEditing(false);
+        } catch (exception) {
+          setError((exception as Error).message);
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <div className="details-header">
+        <h2>Equipment Details</h2>
+        {!editing &&
+          <button type="button" onClick={() => setEditing(true)}>Edit</button>}
+      </div>
+
+      {error && <div className="error">{error}</div>}
+
+      <div className="edit-grid">
+        <label>
+          Category *
+          <select
+            value={draft.category}
+            disabled={!editing || busy}
+            onChange={event => update("category", event.target.value as Equipment["category"])}
+          >
+            {categories.map(category => <option key={category}>{category}</option>)}
+          </select>
+        </label>
+
+        <label>
+          Equipment *
+          <input
+            value={draft.equipmentName}
+            disabled={!editing || busy}
+            onChange={event => update("equipmentName", event.target.value)}
+          />
+        </label>
+
+        <label>
+          Maker
+          <input
+            value={draft.maker || ""}
+            disabled={!editing || busy}
+            onChange={event => update("maker", event.target.value)}
+          />
+        </label>
+
+        <label>
+          Model
+          <input
+            value={draft.model || ""}
+            disabled={!editing || busy}
+            onChange={event => update("model", event.target.value)}
+          />
+        </label>
+
+        <label>
+          Serial Number
+          <input
+            value={draft.serialNumber || ""}
+            disabled={!editing || busy}
+            onChange={event => update("serialNumber", event.target.value)}
+          />
+        </label>
+
+        <label>
+          Quantity *
+          <input
+            type="number"
+            min={1}
+            value={draft.quantity}
+            disabled={!editing || busy}
+            onChange={event => update("quantity", Number(event.target.value))}
+          />
+        </label>
+
+        <label>
+          Inspection By *
+          <select
+            value={draft.inspectionBy}
+            disabled={!editing || busy}
+            onChange={event => update("inspectionBy", event.target.value as Equipment["inspectionBy"])}
+          >
+            <option>Crew</option>
+            <option>Service Company</option>
+          </select>
+        </label>
+
+        <label>
+          Expiry Date
+          <input
+            type="date"
+            value={draft.expiryDate || ""}
+            disabled={!editing || busy}
+            onChange={event => update("expiryDate", event.target.value)}
+          />
+        </label>
+
+        <label>
+          Responsible
+          <input
+            value={draft.responsible || ""}
+            disabled
+            onChange={event => update("responsible", event.target.value)}
+          />
+        </label>
+
+        <label className="wide-field">
+          Remarks
+          <textarea
+            rows={5}
+            value={draft.remarks || ""}
+            disabled={!editing || busy}
+            onChange={event => update("remarks", event.target.value)}
+          />
+        </label>
+      </div>
+
+      <section className="documents-section">
+        <h3>Reports & Certificates</h3>
+        <DocumentControl
+          token={token}
+          equipmentId={item.id}
+          type="report"
+          available={item.reportAvailable}
+          fileName={item.reportFileName}
+          onChanged={onDocumentsChanged}
+        />
+        <DocumentControl
+          token={token}
+          equipmentId={item.id}
+          type="certificate"
+          available={item.certificateAvailable}
+          fileName={item.certificateFileName}
+          onChanged={onDocumentsChanged}
+        />
+      </section>
+
+      <div className="details-actions">
+        <button
+          type="button"
+          className="danger"
+          disabled={busy}
+          onClick={async () => {
+            if (!window.confirm("Delete selected equipment?")) return;
+            setBusy(true);
+            setError("");
+            try {
+              const response = await authFetch(
+                `${apiBaseUrl}/vessels/${vesselId}/equipment/${draft.id}`,
+                token,
+                { method: "DELETE" },
+              );
+              if (!response.ok) throw new Error("Unable to delete equipment.");
+              onDeleted(draft.id);
+            } catch (exception) {
+              setError((exception as Error).message);
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          Delete
+        </button>
+        {editing && <>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              setDraft(item);
+              setError("");
+              setEditing(false);
+            }}
+          >
+            Cancel
+          </button>
+          <button className="primary" type="submit" disabled={busy || !hasChanges}>
+            {busy ? "Saving..." : "Save"}
+          </button>
+        </>}
+      </div>
+    </form>
+  );
+}
+
+
+type DocumentType = "report" | "certificate";
+
+function DocumentControl({
+  token,
+  equipmentId,
+  type,
+  available,
+  fileName,
+  onChanged,
+}: {
+  token: string;
+  equipmentId: string;
+  type: DocumentType;
+  available: boolean;
+  fileName?: string;
+  onChanged: () => Promise<void>;
+}) {
+  const inputId = `${equipmentId}-${type}`;
+  const [documentBusy, setDocumentBusy] = useState(false);
+  const [documentError, setDocumentError] = useState("");
+
+  const label =
+    type === "report"
+      ? "Service Report"
+      : "Service Certificate";
+
+  async function upload(file?: File) {
+    if (!file) return;
+
+    setDocumentBusy(true);
+    setDocumentError("");
+
+    try {
+      const form = new FormData();
+      form.append("file", file);
+
+      const response = await authFetch(
+        `${apiBaseUrl}/equipment/${equipmentId}/documents/${type}`,
+        token,
+        {
+          method: "POST",
+          body: form,
+        },
+      );
+
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(
+          body?.message ?? `Unable to upload ${label}.`,
+        );
+      }
+
+      await onChanged();
+    } catch (exception) {
+      setDocumentError((exception as Error).message);
+    } finally {
+      setDocumentBusy(false);
+      const input = document.getElementById(
+        inputId,
+      ) as HTMLInputElement | null;
+
+      if (input) input.value = "";
+    }
+  }
+
+  async function openDocument() {
+    setDocumentBusy(true);
+    setDocumentError("");
+
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/equipment/${equipmentId}/documents/${type}`,
+        token,
+      );
+
+      if (!response.ok)
+        throw new Error(`Unable to open ${label}.`);
+
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank", "noopener");
+
+      window.setTimeout(
+        () => URL.revokeObjectURL(url),
+        60_000,
+      );
+    } catch (exception) {
+      setDocumentError((exception as Error).message);
+    } finally {
+      setDocumentBusy(false);
+    }
+  }
+
+  async function deleteDocument() {
+    if (!window.confirm(`Delete ${label}?`))
+      return;
+
+    setDocumentBusy(true);
+    setDocumentError("");
+
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/equipment/${equipmentId}/documents/${type}`,
+        token,
+        { method: "DELETE" },
+      );
+
+      if (!response.ok)
+        throw new Error(`Unable to delete ${label}.`);
+
+      await onChanged();
+    } catch (exception) {
+      setDocumentError((exception as Error).message);
+    } finally {
+      setDocumentBusy(false);
+    }
+  }
+
+  return (
+    <div className="document-control">
+      <div className="document-info">
+        <strong>{label}</strong>
+        <span>
+          {available
+            ? fileName || "Current PDF available"
+            : "No document uploaded"}
+        </span>
+        {documentError &&
+          <small className="document-error">
+            {documentError}
+          </small>}
+      </div>
+
+      <div className="document-actions">
+        {available &&
+          <button
+            type="button"
+            disabled={documentBusy}
+            onClick={openDocument}
+          >
+            Open
+          </button>}
+
+        <label
+          className={`button-label ${
+            documentBusy ? "disabled" : ""
+          }`}
+          htmlFor={inputId}
+        >
+          {available ? "Replace" : "Upload"}
+        </label>
+
+        <input
+          id={inputId}
+          className="hidden-file-input"
+          type="file"
+          accept=".pdf,application/pdf"
+          disabled={documentBusy}
+          onChange={event =>
+            upload(event.target.files?.[0])}
+        />
+
+        {available &&
+          <button
+            type="button"
+            className="danger"
+            disabled={documentBusy}
+            onClick={deleteDocument}
+          >
+            Delete
+          </button>}
+      </div>
+    </div>
+  );
+}
+
+function MedicineDialog({ token, vessel, onClose }: {
+  token: string; vessel: Vessel; onClose: () => void;
+}) {
+  const [items, setItems] = useState<MedicineItem[]>([]);
+  const [configuration, setConfiguration] = useState({ categoryAEnabled: false, categoryBEnabled: false, dangerousGoodsEnabled: false, warningDays: 60 });
+  const [message, setMessage] = useState("");
+  const [panel, setPanel] = useState<"register" | "add" | "settings" | "import">("register");
+  const [filter, setFilter] = useState<"All" | "A" | "B" | "Dangerous Goods" | "Missing" | "Expiring">("All");
+  const [search, setSearch] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [preview, setPreview] = useState<{ item: string; action: string }[]>([]);
+  const [draft, setDraft] = useState({ itemName: "", formStrength: "", requiredQuantity: 0, actualQuantity: 0, unit: "", batchNumber: "", expiryDate: "", storageLocation: "", medicalCategory: "B", isDangerousGoods: false, replacementRequired: false, remarks: "" });
+
+  async function load() {
+    const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine`, token);
+    if (!response.ok) throw new Error("Unable to load Medicine Chest.");
+    const data = await response.json(); setItems(data.items); setConfiguration(data.configuration);
+  }
+  useEffect(() => { load().catch(e => setMessage(e.message)); }, []);
+  async function saveConfiguration(next = configuration) {
+    const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine/configuration`, token, { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(next) });
+    if (!response.ok) throw new Error("Medicine configuration could not be saved."); setMessage("Configuration saved.");
+  }
+  async function addItem() {
+    const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine/items`, token, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...draft, isActive: true, isStandardTemplateItem: false, expiryDate: draft.expiryDate || null }) });
+    if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.message || "Medicine item could not be added."); }
+    setDraft({ ...draft, itemName: "", formStrength: "", unit: "", batchNumber: "", expiryDate: "", remarks: "" });
+    setPanel("register");
+    setMessage("Medicine item added.");
+    await load();
+  }
+  async function deactivate(item: MedicineItem) {
+    if (!window.confirm(`Remove ${item.itemName} from the active Medicine Chest list?`)) return;
+    const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine/items/${item.id}`, token, { method: "DELETE" });
+    if (!response.ok) throw new Error("Medicine item could not be removed."); await load();
+  }
+  async function download(kind: "export" | "replenishment") {
+    const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine/${kind}`, token); if (!response.ok) throw new Error("Workbook could not be generated.");
+    const url = URL.createObjectURL(await response.blob()); const anchor = document.createElement("a"); anchor.href = url; anchor.download = `${kind}-${vessel.vesselName}.xlsx`; anchor.click(); URL.revokeObjectURL(url);
+  }
+  async function importTemplate(apply: boolean) {
+    if (!file) return; const body = new FormData(); body.append("file", file);
+    const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine/import?apply=${apply}&overwriteActual=false`, token, { method: "POST", body });
+    const result = await response.json(); if (!response.ok) throw new Error(result.message || "Template validation failed.");
+    if (apply) { setPreview([]); setPanel("register"); setMessage(`${result.imported} template rows imported without overwriting onboard quantities.`); await load(); } else setPreview(result.preview);
+  }
+  const act = (operation: () => Promise<void>) => operation().catch(e => setMessage(e.message));
+
+  const filteredItems = items.filter(item => {
+    const text = `${item.itemName} ${item.formStrength ?? ""} ${item.batchNumber ?? ""} ${item.storageLocation ?? ""}`.toLowerCase();
+    if (search.trim() && !text.includes(search.trim().toLowerCase())) return false;
+    if (filter === "A") return !item.isDangerousGoods && item.medicalCategory === "A";
+    if (filter === "B") return !item.isDangerousGoods && item.medicalCategory === "B";
+    if (filter === "Dangerous Goods") return item.isDangerousGoods;
+    if (filter === "Missing") return item.status === "Missing";
+    if (filter === "Expiring") return item.status === "Soon" || item.status.includes("Overdue") || item.status.includes("Expired");
+    return true;
+  });
+
+  const missingCount = items.filter(item => item.status === "Missing").length;
+  const attentionCount = items.filter(item => item.status === "Soon" || item.status.includes("Overdue") || item.status.includes("Expired")).length;
+
+  return <div className="modal-backdrop"><div className="modal-card wide-modal medicine-dialog">
+    <div className="modal-header"><div><h2>Medicine Chest</h2><p>{vessel.vesselName} · IMO {vessel.imoNumber}</p></div><button onClick={onClose}>Close</button></div>
+    {message && <div className="notice">{message}</div>}
+
+    <div className="medicine-summary">
+      <div><strong>{items.length}</strong><span>Active items</span></div>
+      <div className={missingCount ? "attention" : ""}><strong>{missingCount}</strong><span>Missing quantity</span></div>
+      <div className={attentionCount ? "attention" : ""}><strong>{attentionCount}</strong><span>Expiry attention</span></div>
+      <div><strong>{configuration.warningDays}</strong><span>Warning days</span></div>
+    </div>
+
+    <nav className="medicine-navigation" aria-label="Medicine Chest sections">
+      <button className={panel === "register" ? "selected" : ""} onClick={() => setPanel("register")}>Register</button>
+      <button className={panel === "add" ? "selected primary" : ""} onClick={() => setPanel("add")}>Add item</button>
+      <button className={panel === "settings" ? "selected" : ""} onClick={() => setPanel("settings")}>Settings</button>
+      <button className={panel === "import" ? "selected" : ""} onClick={() => setPanel("import")}>Import list</button>
+    </nav>
+
+    {panel === "register" && <section className="medicine-register">
+      <div className="medicine-toolbar">
+        <input aria-label="Search medicine" placeholder="Search medicine, batch or location..." value={search} onChange={e => setSearch(e.target.value)} />
+        <button onClick={() => act(() => download("export"))}>Export register</button>
+        <button className="primary" onClick={() => act(() => download("replenishment"))}>Replenishment XLSX</button>
+      </div>
+      <div className="medicine-filters">
+        {(["All", "A", "B", "Dangerous Goods", "Missing", "Expiring"] as const).map(value =>
+          <button key={value} className={filter === value ? "selected" : ""} onClick={() => setFilter(value)}>{value}</button>)}
+      </div>
+      {filteredItems.length === 0
+        ? <div className="empty-state">No medicine items match this view.</div>
+        : <div className="table-scroll"><table><thead><tr><th>Item</th><th>List</th><th>Required</th><th>Actual</th><th>Batch</th><th>Expiry</th><th>Status</th><th></th></tr></thead><tbody>{filteredItems.map(item => <tr key={item.id}><td><strong>{item.itemName}</strong><small>{item.formStrength}</small></td><td>{item.isDangerousGoods ? "Dangerous Goods" : `Category ${item.medicalCategory || "—"}`}</td><td>{item.requiredQuantity} {item.unit}</td><td>{item.actualQuantity} {item.unit}</td><td>{item.batchNumber || "—"}</td><td>{formatDate(item.expiryDate)}</td><td><span className={`status medicine-status-${item.status.toLowerCase().replace(/[^a-z]+/g, "-")}`}>{item.status}</span></td><td><button className="danger" onClick={() => act(() => deactivate(item))}>{item.isStandardTemplateItem ? "Deactivate" : "Remove"}</button></td></tr>)}</tbody></table></div>}
+    </section>}
+
+    {panel === "add" && <section><div className="section-heading"><div><h3>Add medicine or instrument</h3><p className="muted">Enter the onboard quantity, required quantity and expiry information.</p></div><button onClick={() => setPanel("register")}>Cancel</button></div><div className="form-grid">
+      <label>English item name *<input autoFocus value={draft.itemName} onChange={e => setDraft({ ...draft, itemName: e.target.value })} /></label><label>Form / strength<input value={draft.formStrength} onChange={e => setDraft({ ...draft, formStrength: e.target.value })} /></label>
+      <label>Unit *<input placeholder="pcs, packs, bottles..." value={draft.unit} onChange={e => setDraft({ ...draft, unit: e.target.value })} /></label><label>List<select value={draft.isDangerousGoods ? "DG" : draft.medicalCategory} onChange={e => setDraft({ ...draft, isDangerousGoods: e.target.value === "DG", medicalCategory: e.target.value === "DG" ? draft.medicalCategory : e.target.value })}><option value="A">Category A</option><option value="B">Category B</option><option value="DG">Dangerous Goods</option></select></label>
+      <label>Required quantity<input type="number" min="0" value={draft.requiredQuantity} onChange={e => setDraft({ ...draft, requiredQuantity: Number(e.target.value) })} /></label><label>Actual onboard quantity<input type="number" min="0" value={draft.actualQuantity} onChange={e => setDraft({ ...draft, actualQuantity: Number(e.target.value) })} /></label>
+      <label>Batch number<input value={draft.batchNumber} onChange={e => setDraft({ ...draft, batchNumber: e.target.value })} /></label><label>Expiry date<input type="date" value={draft.expiryDate} onChange={e => setDraft({ ...draft, expiryDate: e.target.value })} /></label>
+      <label>Storage location<input value={draft.storageLocation} onChange={e => setDraft({ ...draft, storageLocation: e.target.value })} /></label><label>Remarks<input value={draft.remarks} onChange={e => setDraft({ ...draft, remarks: e.target.value })} /></label>
+      <label><input type="checkbox" checked={draft.replacementRequired} onChange={e => setDraft({ ...draft, replacementRequired: e.target.checked })} /> Replacement required</label>
+    </div><div className="service-request-actions"><button onClick={() => setPanel("register")}>Cancel</button><button className="primary" disabled={!draft.itemName.trim() || !draft.unit.trim()} onClick={() => act(addItem)}>Save item</button></div></section>}
+
+    {panel === "settings" && <section><div className="section-heading"><div><h3>Vessel medicine requirements</h3><p className="muted">Select the lists applicable to this vessel.</p></div><button onClick={() => setPanel("register")}>Cancel</button></div><div className="medicine-settings">
+      {(["categoryAEnabled", "categoryBEnabled", "dangerousGoodsEnabled"] as const).map((key) => <label key={key}><input type="checkbox" checked={configuration[key]} onChange={e => setConfiguration({ ...configuration, [key]: e.target.checked })} /> {key === "categoryAEnabled" ? "Category A" : key === "categoryBEnabled" ? "Category B" : "Dangerous Goods"}</label>)}
+      <label>Expiry warning days<input type="number" min="0" max="730" value={configuration.warningDays} onChange={e => setConfiguration({ ...configuration, warningDays: Number(e.target.value) })} /></label>
+    </div><div className="service-request-actions"><button onClick={() => setPanel("register")}>Cancel</button><button className="primary" onClick={() => act(async () => { await saveConfiguration(); setPanel("register"); })}>Save settings</button></div></section>}
+
+    {panel === "import" && <section><div className="section-heading"><div><h3>Import approved list</h3><p className="muted">Upload an approved Excel or CSV template. Existing onboard quantities will not be overwritten.</p></div><button onClick={() => setPanel("register")}>Cancel</button></div><div className="medicine-import">
+      <input type="file" accept=".xlsx,.csv" onChange={e => { setFile(e.target.files?.[0] || null); setPreview([]); }} />
+      <button disabled={!file} onClick={() => act(() => importTemplate(false))}>Preview import</button>
+    </div>{preview.length > 0 && <div className="import-preview"><h4>Preview ({preview.length} rows)</h4><ul>{preview.map((x, i) => <li key={i}>{x.item}: {x.action}</li>)}</ul><button className="primary" onClick={() => act(() => importTemplate(true))}>Apply approved template</button></div>}</section>}
+  </div></div>;
+}
+
+function Detail({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="detail">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")!).render(
+  <React.StrictMode><App /></React.StrictMode>,
+);
