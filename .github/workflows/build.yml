@@ -311,7 +311,7 @@ jobs:
             installer/output/FleetSafetyManager_Office_Setup.exe
             installer/output/FleetSafetyManager_Ship_Setup.exe
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
 
       - name: Upload personalized Figaro Ship installer
         uses: actions/upload-artifact@v4
@@ -319,7 +319,7 @@ jobs:
           name: FSM-Ship-Figaro-One-Click-Installer
           path: installer/output/FSM_Ship_Figaro_Setup.exe
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
 
       - name: Upload account-free remote pilot
         uses: actions/upload-artifact@v4
@@ -327,4 +327,4 @@ jobs:
           name: FleetSafetyManager-RC20-Remote-Pilot
           path: pilot/output/FSM_Remote_Pilot
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
