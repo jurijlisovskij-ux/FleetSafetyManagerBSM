@@ -1,11 +1,11 @@
-"""Local, read-only Python preview of the FSM API."""
+"""Local, Python preview of the FSM API."""
 import argparse
 import base64
 from contextlib import closing
 from datetime import date, datetime, timezone
 import hashlib
 import hmac
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
 import re
@@ -14,11 +14,11 @@ import sqlite3
 from threading import Lock
 from time import monotonic
 from urllib.parse import urlsplit
-from uuid import UUID
+from uuid import UUID, uuid4
 
 
-def database(path):
-    db = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+def database(path, writable=False):
+    db = sqlite3.connect(path.resolve().as_uri() + ("?mode=rw" if writable else "?mode=ro"), uri=True)
     db.row_factory = sqlite3.Row
     return closing(db)
 
@@ -50,9 +50,64 @@ def equipment(row, today):
     return item
 
 
+
+def save_equipment(db, vessel_id, item_id, body):
+    def clean(key):
+        value = body.get(key)
+        if value is None:
+            return None
+        if not isinstance(value, str):
+            raise ValueError(f"Invalid {key}.")
+        return value.strip() or None
+
+    try:
+        name = clean("equipmentName")
+        if not name or len(name) > 180:
+            raise ValueError("Equipment Name must contain 1 to 180 characters.")
+        quantity = body.get("quantity")
+        if type(quantity) is not int or not 1 <= quantity <= 2147483647:
+            raise ValueError("Quantity must be a positive whole number.")
+        category, inspection = body.get("category"), body.get("inspectionBy")
+        if type(category) is not int or not 0 <= category < 4:
+            raise ValueError("Select a valid category.")
+        if type(inspection) is not int or not 0 <= inspection < 2:
+            raise ValueError("Select a valid inspection type.")
+        expiry = clean("expiryDate")
+        if expiry and date.fromisoformat(expiry).isoformat() != expiry:
+            raise ValueError("Enter a valid Expiry Date.")
+        values = (("LSA", "FFE", "Medicine", "RadioAndNavigation")[category], name,
+                  clean("maker"), clean("model"), clean("serialNumber"), quantity,
+                  ("Crew", "ServiceCompany")[inspection], expiry,
+                  clean("responsible"), clean("remarks"),
+                  datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f"))
+    except ValueError as exc:
+        return 400, {"message": str(exc)}
+
+    with db:
+        if item_id is None:
+            item_id = str(uuid4()).upper()
+            db.execute("""INSERT INTO equipment (Category, EquipmentName, Maker, Model,
+                SerialNumber, Quantity, InspectionBy, ExpiryDate, Responsible, Remarks,
+                LastModifiedUtc, Id, VesselId, IsDeleted)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""", (*values, item_id, vessel_id))
+            status = 201
+        else:
+            changed = db.execute("""UPDATE equipment SET Category=?, EquipmentName=?, Maker=?, Model=?,
+                SerialNumber=?, Quantity=?, InspectionBy=?, ExpiryDate=?, Responsible=?, Remarks=?,
+                LastModifiedUtc=? WHERE lower(Id)=? AND VesselId=? AND IsDeleted=0""",
+                                 (*values, item_id.lower(), vessel_id))
+            if changed.rowcount == 0:
+                return 404, {"message": "Equipment not found."}
+            status = 200
+        row = db.execute("SELECT * FROM equipment WHERE lower(Id)=? AND VesselId=?",
+                         (item_id.lower(), vessel_id)).fetchone()
+    return status, equipment(row, datetime.now(timezone.utc).date())
+
+
 class Preview:
-    def __init__(self, path, edition, ship_id=None):
+    def __init__(self, path, edition, ship_id=None, writable=False):
         self.path = path
+        self.writable = writable
         self.edition = edition
         self.ship_id = str(UUID(ship_id)) if ship_id else None
         self.lock = Lock()
@@ -99,7 +154,7 @@ class Preview:
         return db.execute(sql + " ORDER BY v.VesselName, v.Id", params).fetchall()
 
     def request(self, method, path, authorization="", body=None):
-        with database(self.path) as db:
+        with database(self.path, self.writable) as db:
             if method == "GET" and path == "/api/synchronization/activation/state":
                 vessel = None
                 if self.ship_id:
@@ -119,11 +174,18 @@ class Preview:
             allowed = ("Crew",) if self.edition == "Ship" else ("OfficeAdmin", "Superintendent")
             if not user or user["Role"] not in allowed:
                 return 401, {"message": "Sign in again."}
-            if method != "GET":
-                return 501, {"message": "This Python preview does not write to the database."}
-            if path == "/api/auth/me":
+            if method == "GET" and path == "/api/auth/me":
                 return 200, fields(user, "FullName")
             vessels = self.vessels(db, user)
+            if method in ("POST", "PUT") and self.writable:
+                match = re.fullmatch(r"/api/vessels/([^/]+)/equipment(?:/([^/]+))?", path)
+                if match and (method == "PUT") == bool(match[2]):
+                    vessel = next((v for v in vessels if v["Id"].lower() == match[1].lower()), None)
+                    if not vessel:
+                        return 403, {"message": "Access denied."}
+                    return save_equipment(db, vessel["Id"], match[2], body or {})
+            if method != "GET":
+                return 501, {"message": "This operation is unavailable in this Python preview."}
             if path == "/api/vessels":
                 return 200, [dict(fields(v, "Id", "VesselName", "ImoNumber", "Flag",
                                          "CompanyName", "InvoicingDetails", "AccountingEmail"),
@@ -166,16 +228,32 @@ def main():
     parser.add_argument("--edition", choices=("Office", "Ship"), default="Office")
     parser.add_argument("--ship-id")
     parser.add_argument("--port", type=int, default=8081)
+    parser.add_argument("--write-test-copy", action="store_true")
+    parser.add_argument("--frontend", type=Path, help="Path to built frontend/dist")
     args = parser.parse_args()
     if not args.db.is_file() or (args.edition == "Ship" and not args.ship_id):
         parser.error("An existing database is required; Ship also requires --ship-id.")
-    api = Preview(args.db, args.edition, args.ship_id)
+    api = Preview(args.db, args.edition, args.ship_id, args.write_test_copy)
 
-    class Handler(BaseHTTPRequestHandler):
+    class Handler(SimpleHTTPRequestHandler):
+        def __init__(self, *handler_args):
+            super().__init__(*handler_args, directory=str(args.frontend or "."))
+
+        def list_directory(self, path):
+            self.send_error(404)
+
+        def do_GET(self):
+            if args.frontend and not urlsplit(self.path).path.startswith("/api/"):
+                return super().do_GET()
+            return self.handle_api()
+
+        def do_HEAD(self):
+            self.send_error(405)
+
         def handle_api(self):
             try:
                 body = None
-                if self.command == "POST":
+                if self.command in ("POST", "PUT"):
                     length = int(self.headers.get("Content-Length", "0"))
                     if not 0 <= length <= 16384:
                         raise ValueError()
@@ -196,7 +274,7 @@ def main():
             self.end_headers()
             self.wfile.write(data)
 
-        do_GET = do_POST = do_PUT = do_PATCH = do_DELETE = handle_api
+        do_POST = do_PUT = do_PATCH = do_DELETE = handle_api
 
     with ThreadingHTTPServer(("127.0.0.1", args.port), Handler) as server:
         print(f"FSM Python API preview: http://127.0.0.1:{args.port}", flush=True)
