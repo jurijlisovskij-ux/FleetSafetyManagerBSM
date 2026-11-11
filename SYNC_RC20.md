@@ -38,6 +38,54 @@ internal advertised endpoint through deployment configuration. Plain HTTP is
 enabled by the packaged installer only because the bundled service endpoint is
 private-network HTTP. No HTTP/HTTPS choice appears in the application UI.
 
+## Production Internet endpoint
+
+For vessels outside the Office network, use one permanent HTTPS address. The
+recommended deployment is a named Cloudflare Tunnel whose public hostname maps
+to `http://localhost:8080` on the Office PC. A temporary `trycloudflare.com`
+address must not be used in production.
+
+After creating the named tunnel and public hostname, run the Office helper as
+Administrator. It stores only the public URL in FSM, installs Cloudflare Tunnel
+as an automatic Windows service, restarts both services, and verifies the
+public synchronization health endpoint:
+
+```powershell
+$token = Read-Host "Cloudflare tunnel token" -AsSecureString
+& "$env:LOCALAPPDATA\FleetSafetyManager\Install-FSM-Office-HTTPS.ps1" `
+  -PublicUrl "https://fsm.example.com" `
+  -TunnelToken $token
+```
+
+Set the GitHub Actions repository variable `FSM_PRODUCTION_OFFICE_URL` to the
+same HTTPS URL before building personalized Ship installers. The URL is then
+embedded in the Figaro installer; credentials remain vessel-specific and are
+issued through the one-time activation process.
+
+## Free stable test endpoint
+
+Before the `baltnautic.lt` production hostname is commissioned, the Office
+installer can create a free stable HTTPS test address with Tailscale Funnel.
+No Tailscale installation is required on Ship computers.
+
+1. Install or update the Office edition.
+2. Open **Start → Fleet Safety Manager → Configure FSM Test Connection**.
+3. Approve the Windows administrator prompt and sign in to Tailscale in the
+   browser window. On first use, approve Funnel when prompted.
+4. The helper installs the official signed Windows client, configures unattended
+   startup and persistent Funnel forwarding to `http://127.0.0.1:8080`, updates
+   FSM's advertised endpoint, restarts FSM, and verifies the public health check.
+5. Copy the displayed `https://fsm-office-test.<tailnet>.ts.net` address. It is
+   also saved as `FSM-Test-Connection-URL.txt` in the FSM installation folder.
+6. Run the GitHub Actions workflow manually and provide that address in the
+   optional `office_url` field. The resulting personalized Figaro installer has
+   the test endpoint embedded.
+
+The Funnel configuration uses background mode and resumes after Windows or
+Tailscale restarts. This endpoint is only for the Figaro pilot. Production
+rollout will replace it with `https://fsm.baltnautic.lt` through the existing
+Cloudflare named-tunnel helper; vessel data and credentials remain unchanged.
+
 ## Advanced Diagnostics
 
 Only an authenticated Office Administrator can open

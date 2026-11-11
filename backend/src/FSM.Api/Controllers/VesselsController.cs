@@ -22,8 +22,16 @@ public sealed record SaveVesselRequest(
 public sealed class VesselsController(
     FsmDbContext db,
     VesselAccessService vesselAccess,
-    SynchronizationProvisioningService provisioning) : ControllerBase
+    SynchronizationProvisioningService provisioning,
+    IConfiguration configuration) : ControllerBase
 {
+    private readonly bool isShipEdition = string.Equals(
+        configuration["Application:Edition"],
+        "Ship",
+        StringComparison.OrdinalIgnoreCase);
+
+    private readonly string? configuredShipImoNumber =
+        configuration["Application:ShipImoNumber"]?.Trim();
     [HttpGet]
     public async Task<IActionResult> GetAssigned(
         CancellationToken cancellationToken)
@@ -135,23 +143,80 @@ public sealed class VesselsController(
             });
     }
 
-    [Authorize(Roles = "OfficeAdmin")]
+    // VesselAccessService is the single authorization source here. It allows
+    // Office administrators and limits Ship Crew to the configured vessel.
     [HttpPut("{vesselId:guid}")]
     public async Task<IActionResult> Update(
         Guid vesselId,
         SaveVesselRequest request,
         CancellationToken cancellationToken)
     {
-        var vessel = await db.Vessels
-            .SingleOrDefaultAsync(
-                x => x.Id == vesselId,
-                cancellationToken);
+        var vesselName = request.VesselName.Trim();
+        var imoNumber = request.ImoNumber.Trim();
+
+        Vessel? vessel;
+        if (isShipEdition)
+        {
+            // A browser tab can retain the previous local vessel identifier
+            // while an installer migrates a legacy Ship database. The
+            // personalized Ship edition therefore resolves its single vessel
+            // by the installer-bound IMO number instead of trusting a stale
+            // route identifier. Authentication still limits Ship Edition to
+            // the Crew role in Program.cs.
+            if (!User.IsInRole("Crew"))
+                return Forbid();
+
+            if (!string.IsNullOrWhiteSpace(configuredShipImoNumber))
+            {
+                if (!string.Equals(
+                    imoNumber,
+                    configuredShipImoNumber,
+                    StringComparison.OrdinalIgnoreCase))
+                {
+                    return Forbid();
+                }
+
+                vessel = await db.Vessels
+                    .SingleOrDefaultAsync(
+                        x => x.ImoNumber == configuredShipImoNumber,
+                        cancellationToken);
+            }
+            else
+            {
+                // Generic Ship installations created before personalized IMO
+                // binding continue to use their assigned vessel identifier.
+                if (!await vesselAccess.CanAccessVesselAsync(
+                    User,
+                    vesselId,
+                    cancellationToken))
+                {
+                    return Forbid();
+                }
+
+                vessel = await db.Vessels
+                    .SingleOrDefaultAsync(
+                        x => x.Id == vesselId,
+                        cancellationToken);
+            }
+        }
+        else
+        {
+            if (!await vesselAccess.CanAccessVesselAsync(
+                User,
+                vesselId,
+                cancellationToken))
+            {
+                return Forbid();
+            }
+
+            vessel = await db.Vessels
+                .SingleOrDefaultAsync(
+                    x => x.Id == vesselId,
+                    cancellationToken);
+        }
 
         if (vessel is null)
             return NotFound();
-
-        var vesselName = request.VesselName.Trim();
-        var imoNumber = request.ImoNumber.Trim();
 
         if (string.IsNullOrWhiteSpace(vesselName))
         {

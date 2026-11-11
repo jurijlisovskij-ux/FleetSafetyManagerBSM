@@ -33,8 +33,25 @@ public static class DatabaseConnectionResolver
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(intendedPath)!);
+        EnsureDatabaseIsWritable(intendedPath);
         builder.DataSource = intendedPath;
         return builder.ToString();
+    }
+
+    private static void EnsureDatabaseIsWritable(string databasePath)
+    {
+        if (!File.Exists(databasePath))
+            return;
+
+        var attributes = File.GetAttributes(databasePath);
+        if ((attributes & FileAttributes.ReadOnly) == 0)
+            return;
+
+        File.SetAttributes(
+            databasePath,
+            attributes & ~FileAttributes.ReadOnly);
+        Console.WriteLine(
+            $"Removed the read-only attribute from the Fleet Safety Manager database: {databasePath}");
     }
 
     private static string? FindExistingDatabase(string applicationDirectory, string intendedPath)

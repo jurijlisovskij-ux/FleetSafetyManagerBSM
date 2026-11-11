@@ -10,6 +10,22 @@
   #define MyBuild GetDateTimeString('yyyymmddhhnnss', '', '')
 #endif
 
+#ifndef MyShipVesselId
+  #define MyShipVesselId ""
+#endif
+
+#ifndef MyShipVesselName
+  #define MyShipVesselName ""
+#endif
+
+#ifndef MyShipImoNumber
+  #define MyShipImoNumber ""
+#endif
+
+#ifndef MyOfficeBaseUrl
+  #define MyOfficeBaseUrl ""
+#endif
+
 #define AppName "Fleet Safety Manager"
 #define AppVersion "1.0.0-RC20"
 #define ServiceName "FleetSafetyManager"
@@ -47,6 +63,9 @@ Source: "..\publish\*"; DestDir: "{app}\Releases\{#ReleaseName}"; Flags: ignorev
 Source: "..\publish\FleetSafetyManagerLauncher.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "FleetSafetyManager.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "Launch Fleet Safety Manager.cmd"; DestDir: "{app}"; Flags: ignoreversion
+Source: "Reset-FSM-Administrator-Password.ps1"; DestDir: "{app}"; Flags: ignoreversion; Check: IsOfficeEdition
+Source: "Install-FSM-Office-HTTPS.ps1"; DestDir: "{app}"; Flags: ignoreversion; Check: IsOfficeEdition
+Source: "Configure-FSM-Test-Connection.ps1"; DestDir: "{app}"; Flags: ignoreversion; Check: IsOfficeEdition
 
 [Dirs]
 Name: "{app}\Releases\{#ReleaseName}\Data"
@@ -62,6 +81,8 @@ Name: "{app}\Releases\{#ReleaseName}\Logs"
 [Icons]
 Name: "{autodesktop}\Fleet Safety Manager"; Filename: "{app}\FleetSafetyManagerLauncher.exe"; WorkingDir: "{app}"; IconFilename: "{app}\FleetSafetyManager.ico"; Comment: "Open Fleet Safety Manager {#MyEdition}"
 Name: "{group}\Fleet Safety Manager"; Filename: "{app}\FleetSafetyManagerLauncher.exe"; WorkingDir: "{app}"; IconFilename: "{app}\FleetSafetyManager.ico"; Comment: "Open Fleet Safety Manager {#MyEdition}"
+Name: "{group}\Reset FSM Administrator Password"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\Reset-FSM-Administrator-Password.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\FleetSafetyManager.ico"; Comment: "Reset the Office Administrator password"; Check: IsOfficeEdition
+Name: "{group}\Configure FSM Test Connection"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\Configure-FSM-Test-Connection.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\FleetSafetyManager.ico"; Comment: "Create the stable HTTPS test synchronization address"; Check: IsOfficeEdition
 Name: "{group}\Fleet Safety Manager Data"; Filename: "{app}"
 Name: "{group}\Uninstall Fleet Safety Manager"; Filename: "{uninstallexe}"
 
@@ -122,10 +143,34 @@ begin
     UpdatedConfigText := String(ConfigText);
     StringChangeEx(UpdatedConfigText, '"Edition": "Office"', '"Edition": "{#MyEdition}"', True);
     StringChangeEx(UpdatedConfigText, '"Edition": "Ship"', '"Edition": "{#MyEdition}"', True);
+    if '{#MyShipVesselId}' <> '' then
+    begin
+      StringChangeEx(UpdatedConfigText, '"ShipVesselId": ""',
+        '"ShipVesselId": "{#MyShipVesselId}"', True);
+      StringChangeEx(UpdatedConfigText, '"ShipVesselName": ""',
+        '"ShipVesselName": "{#MyShipVesselName}"', True);
+      StringChangeEx(UpdatedConfigText, '"ShipImoNumber": ""',
+        '"ShipImoNumber": "{#MyShipImoNumber}"', True);
+      { Early RC20 configuration files only contained ShipVesselId. Add the
+        remaining personalized identity fields when updating those installs. }
+      if Pos('"ShipVesselName"', UpdatedConfigText) = 0 then
+        StringChangeEx(UpdatedConfigText,
+          '"ShipVesselId": "{#MyShipVesselId}"',
+          '"ShipVesselId": "{#MyShipVesselId}", "ShipVesselName": "{#MyShipVesselName}", "ShipImoNumber": "{#MyShipImoNumber}"',
+          True);
+    end;
+    if (CompareText('{#MyEdition}', 'Ship') = 0) and
+       ('{#MyOfficeBaseUrl}' <> '') then
+    begin
+      StringChangeEx(UpdatedConfigText, '"OfficeBaseUrl": ""',
+        '"OfficeBaseUrl": "{#MyOfficeBaseUrl}"', True);
+    end;
     { The packaged service listens on private-network HTTP; this internal flag is
       configured by the installer and is never exposed to ordinary users. }
-    StringChangeEx(UpdatedConfigText, '"AllowInsecureHttp": false',
-      '"AllowInsecureHttp": true', True);
+    if (CompareText('{#MyEdition}', 'Office') = 0) or
+       (Pos('http://', Lowercase('{#MyOfficeBaseUrl}')) = 1) then
+      StringChangeEx(UpdatedConfigText, '"AllowInsecureHttp": false',
+        '"AllowInsecureHttp": true', True);
     if (Pos('"Edition": "{#MyEdition}"', UpdatedConfigText) = 0) or
        (not SaveStringToFile(ConfigPath, AnsiString(UpdatedConfigText), False)) then
       RaiseException('Could not configure the RC20 {#MyEdition} release.');
@@ -231,11 +276,26 @@ begin
     if DirExists(OldReleasePath + '\' + FolderName) then
     begin
       if not Exec(ExpandConstant('{sys}\robocopy.exe'),
-        '"' + OldReleasePath + '\' + FolderName + '" "' + NewReleasePath + '\' + FolderName + '" /E /COPY:DAT /DCOPY:DAT /R:2 /W:1',
+        '"' + OldReleasePath + '\' + FolderName + '" "' + NewReleasePath + '\' + FolderName + '" /E /COPY:DT /DCOPY:DT /R:2 /W:1',
         '', SW_HIDE, ewWaitUntilTerminated, ResultCode) or (ResultCode > 7) then
         RaiseException('Could not migrate ' + FolderName + ' from the previous release.');
     end;
   end;
+end;
+
+procedure CopyPersistentConfiguration(const OldReleasePath, NewReleasePath: string);
+var
+  OldConfigPath: string;
+  NewConfigPath: string;
+begin
+  if (OldReleasePath = '') or (CompareText(OldReleasePath, NewReleasePath) = 0) then
+    exit;
+
+  OldConfigPath := OldReleasePath + '\appsettings.json';
+  NewConfigPath := NewReleasePath + '\appsettings.json';
+  if FileExists(OldConfigPath) and
+     (not FileCopy(OldConfigPath, NewConfigPath, False)) then
+    RaiseException('Could not preserve the existing FSM connection configuration.');
 end;
 
 procedure VerifyRelease(const ReleasePath: string);
@@ -382,6 +442,7 @@ begin
   begin
     NewReleasePath := ExpandConstant('{app}\Releases\{#ReleaseName}');
     OldReleasePath := PersistentDataSource;
+    CopyPersistentConfiguration(OldReleasePath, NewReleasePath);
     UpdateEditionConfiguration;
     VerifyRelease(NewReleasePath);
     CopyPersistentData(OldReleasePath, NewReleasePath);

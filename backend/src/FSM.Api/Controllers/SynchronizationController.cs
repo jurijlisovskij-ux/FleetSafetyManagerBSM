@@ -242,7 +242,8 @@ public sealed class SynchronizationController(
                 StatusCodes.Status502BadGateway,
                 new
                 {
-                    message = "Synchronization failed. It will retry automatically."
+                    message = exception.Message,
+                    retryMessage = "Synchronization will retry automatically."
                 });
         }
     }

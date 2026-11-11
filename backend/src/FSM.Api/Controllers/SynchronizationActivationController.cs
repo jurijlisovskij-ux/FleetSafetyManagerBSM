@@ -1,4 +1,5 @@
 using System.Data;
+using System.Net;
 using System.Net.Http.Json;
 using FSM.Api.Synchronization;
 using FSM.Domain.Entities;
@@ -25,11 +26,32 @@ public sealed class SynchronizationActivationController(
     private readonly SynchronizationOptions options = options.Value;
     private readonly string edition =
         configuration["Application:Edition"] ?? "Office";
+    private readonly Guid? configuredShipVesselId = Guid.TryParse(
+        configuration["Application:ShipVesselId"],
+        out var shipVesselId)
+            ? shipVesselId
+            : null;
+    private readonly string? configuredShipImoNumber =
+        configuration["Application:ShipImoNumber"];
 
     [AllowAnonymous]
     [HttpGet("state")]
     public async Task<IActionResult> State(CancellationToken cancellationToken)
     {
+        var personalizedVessel = configuredShipVesselId.HasValue
+            ? await db.Vessels.AsNoTracking()
+                .Where(x => x.Id == configuredShipVesselId.Value ||
+                    (!string.IsNullOrWhiteSpace(configuredShipImoNumber) &&
+                     x.ImoNumber == configuredShipImoNumber))
+                .Select(x => new
+                {
+                    VesselId = x.Id,
+                    vesselName = x.VesselName,
+                    imoNumber = x.ImoNumber,
+                    LastSynchronizationUtc = (DateTime?)null
+                })
+                .FirstOrDefaultAsync(cancellationToken)
+            : null;
         var configured = await db.SynchronizationSettings
             .AsNoTracking()
             .Where(x => x.Enabled && x.RemoteBaseUrl != null &&
@@ -42,7 +64,7 @@ public sealed class SynchronizationActivationController(
                 x.LastSynchronizationUtc
             })
             .FirstOrDefaultAsync(cancellationToken);
-        var legacyVessels = configured is null
+        var legacyVessels = configured is null && personalizedVessel is null
             ? await db.Vessels.AsNoTracking()
                 .OrderBy(x => x.VesselName)
                 .Take(2)
@@ -61,11 +83,13 @@ public sealed class SynchronizationActivationController(
         return Ok(new
         {
             edition,
+            activated = configured is not null,
             requiresActivation = edition.Equals(
                 "Ship",
                 StringComparison.OrdinalIgnoreCase) &&
-                configured is null && legacyVessel is null,
-            vessel = configured ?? (object?)legacyVessel
+                configured is null &&
+                (personalizedVessel is not null || legacyVessel is null),
+            vessel = configured ?? (object?)personalizedVessel ?? legacyVessel
         });
     }
 
@@ -95,6 +119,36 @@ public sealed class SynchronizationActivationController(
     {
         if (!IsOffice())
             return NotFound();
+        try
+        {
+            var code = await provisioning.RegenerateActivationCodeAsync(
+                vesselId,
+                cancellationToken);
+            return Ok(new
+            {
+                activationCode = code,
+                expiresUtc = DateTime.UtcNow.AddDays(7)
+            });
+        }
+        catch (KeyNotFoundException)
+        {
+            return NotFound();
+        }
+    }
+
+    [AllowAnonymous]
+    [HttpPost("pilot-code/{vesselId:guid}")]
+    public async Task<IActionResult> GenerateLocalPilotCode(
+        Guid vesselId,
+        CancellationToken cancellationToken)
+    {
+        if (!IsOffice())
+            return NotFound();
+
+        var remoteAddress = HttpContext.Connection.RemoteIpAddress;
+        if (remoteAddress is null || !IPAddress.IsLoopback(remoteAddress))
+            return NotFound();
+
         try
         {
             var code = await provisioning.RegenerateActivationCodeAsync(
@@ -205,6 +259,12 @@ public sealed class SynchronizationActivationController(
             });
         }
 
+        var officeVessel = office.Catalog.Vessels.Single(
+            vessel => vessel.VesselId == request.VesselId);
+        await ReconcileLocalVesselIdentityAsync(
+            officeVessel,
+            cancellationToken);
+
         var http = httpClientFactory.CreateClient("Synchronization");
         HttpResponseMessage response;
         try
@@ -311,6 +371,90 @@ public sealed class SynchronizationActivationController(
             vesselId = vessel.Id,
             message = "Synchronization completed successfully."
         });
+    }
+
+    private async Task ReconcileLocalVesselIdentityAsync(
+        ActivationVesselItem officeVessel,
+        CancellationToken cancellationToken)
+    {
+        var existingTarget = await db.Vessels
+            .IgnoreQueryFilters()
+            .SingleOrDefaultAsync(
+                x => x.Id == officeVessel.VesselId,
+                cancellationToken);
+        var localVessel = await db.Vessels
+            .IgnoreQueryFilters()
+            .SingleOrDefaultAsync(
+                x => x.ImoNumber == officeVessel.ImoNumber,
+                cancellationToken);
+        if (localVessel is null || localVessel.Id == officeVessel.VesselId)
+            return;
+
+        await using var transaction = await db.Database.BeginTransactionAsync(
+            IsolationLevel.Serializable,
+            cancellationToken);
+        var localVesselId = localVessel.Id;
+
+        if (existingTarget is null)
+        {
+            // Release the unique IMO before creating the canonical Office vessel.
+            localVessel.ImoNumber = $"X{localVesselId:N}"[..7];
+            await db.SaveChangesAsync(cancellationToken);
+            existingTarget = new Vessel
+            {
+                Id = officeVessel.VesselId,
+                VesselName = officeVessel.VesselName,
+                ImoNumber = officeVessel.ImoNumber,
+                LastModifiedUtc = localVessel.LastModifiedUtc
+            };
+            db.Vessels.Add(existingTarget);
+            await db.SaveChangesAsync(cancellationToken);
+        }
+
+        await db.UserVessels.IgnoreQueryFilters()
+            .Where(x => x.VesselId == localVesselId)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(x => x.VesselId, officeVessel.VesselId),
+                cancellationToken);
+        await db.Equipment.IgnoreQueryFilters()
+            .Where(x => x.VesselId == localVesselId)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(x => x.VesselId, officeVessel.VesselId),
+                cancellationToken);
+        await db.MedicineItems.IgnoreQueryFilters()
+            .Where(x => x.VesselId == localVesselId)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(x => x.VesselId, officeVessel.VesselId),
+                cancellationToken);
+        await db.VesselMedicineConfigurations.IgnoreQueryFilters()
+            .Where(x => x.VesselId == localVesselId)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(x => x.VesselId, officeVessel.VesselId),
+                cancellationToken);
+        await db.InspectionReports.IgnoreQueryFilters()
+            .Where(x => x.VesselId == localVesselId)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(x => x.VesselId, officeVessel.VesselId),
+                cancellationToken);
+        await db.SynchronizationLogs.IgnoreQueryFilters()
+            .Where(x => x.VesselId == localVesselId)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(x => x.VesselId, officeVessel.VesselId),
+                cancellationToken);
+        await db.SynchronizationTransfers.IgnoreQueryFilters()
+            .Where(x => x.VesselId == localVesselId)
+            .ExecuteUpdateAsync(setters => setters
+                .SetProperty(x => x.VesselId, officeVessel.VesselId),
+                cancellationToken);
+        await db.SynchronizationSettings.IgnoreQueryFilters()
+            .Where(x => x.VesselId == localVesselId)
+            .ExecuteDeleteAsync(cancellationToken);
+        await db.Vessels.IgnoreQueryFilters()
+            .Where(x => x.Id == localVesselId)
+            .ExecuteDeleteAsync(cancellationToken);
+
+        db.Entry(localVessel).State = EntityState.Detached;
+        await transaction.CommitAsync(cancellationToken);
     }
 
     private bool IsOffice() => edition.Equals(

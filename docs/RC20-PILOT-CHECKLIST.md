@@ -14,7 +14,7 @@ Use this checklist for every Office and Ship pilot deployment. Do not import a m
 - [ ] Run `FleetSafetyManager_RC20_Office_Setup.exe` as an administrator.
 - [ ] Confirm exactly one Fleet Safety Manager service, desktop shortcut, and Start Menu entry exist.
 - [ ] Launch once from Desktop, Start Menu, and `Launch Fleet Safety Manager.cmd`; all must open the release named by `current.txt`.
-- [ ] Export the installation-specific `FSM-Recovery.fsmkey`, store it offline, and test validation before pilot handover.
+- [ ] Open the Windows Start menu and test `Reset FSM Administrator Password` with Windows administrator approval.
 
 ## Ship installation
 

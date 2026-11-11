@@ -2,6 +2,11 @@ name: Build FSM RC20 Windows Installers
 
 on:
   workflow_dispatch:
+    inputs:
+      office_url:
+        description: "Optional HTTPS Office URL embedded in the personalized Figaro installer"
+        required: false
+        type: string
   push:
     branches: [main, feature/ship-office-sync]
     paths:
@@ -71,7 +76,9 @@ jobs:
             "Waiting for Internet",
             "Pending changes",
             "Synchronize Now",
-            "Advanced Diagnostics"
+            "Advanced Diagnostics",
+            "Ship Edition",
+            "crew@fsm.local"
           ) | ForEach-Object {
             if ($bundle -notmatch [regex]::Escape($_)) {
               throw "Frontend bundle is missing the RC20-026 zero-configuration experience: $_"
@@ -128,6 +135,15 @@ jobs:
           }
 
           ./scripts/test-desktop-launcher.ps1
+          ./scripts/test-local-admin-reset.ps1
+
+          if ($publishedBundle -notmatch "Reset FSM Administrator Password") {
+            throw "Published application is missing the local administrator recovery instructions."
+          }
+          if ($publishedBundle -match "Google app password" -or
+              $publishedBundle -match "Send Verification Code") {
+            throw "Published application still contains the obsolete Gmail recovery UI."
+          }
 
       - name: Install Inno Setup
         shell: pwsh
@@ -149,15 +165,143 @@ jobs:
             /DOutputBase=FleetSafetyManager_Ship_Setup `
             installer/FleetSafetyManager.iss
 
+      - name: Build personalized Figaro Ship installer
+        shell: pwsh
+        env:
+          FSM_WORKFLOW_OFFICE_URL: ${{ inputs.office_url }}
+          FSM_PRODUCTION_OFFICE_URL: ${{ vars.FSM_PRODUCTION_OFFICE_URL }}
+        run: |
+          $arguments = @(
+            "/DMyEdition=Ship",
+            "/DMyShipVesselId=f1841487-0000-4000-8000-000000000001",
+            "/DMyShipVesselName=Figaro",
+            "/DMyShipImoNumber=1841487",
+            "/DOutputBase=FSM_Ship_Figaro_Setup"
+          )
+          $officeUrl = if ($env:FSM_WORKFLOW_OFFICE_URL) {
+            $env:FSM_WORKFLOW_OFFICE_URL.Trim().TrimEnd('/')
+          } elseif ($env:FSM_PRODUCTION_OFFICE_URL) {
+            $env:FSM_PRODUCTION_OFFICE_URL.Trim().TrimEnd('/')
+          } elseif (Test-Path 'installer/Figaro-Office-Url.txt') {
+            (Get-Content 'installer/Figaro-Office-Url.txt' -Raw).Trim().TrimEnd('/')
+          } else {
+            ''
+          }
+          if ($officeUrl) {
+            if ($officeUrl -notmatch '^https://') {
+              throw 'FSM_PRODUCTION_OFFICE_URL must use HTTPS.'
+            }
+            $arguments += "/DMyOfficeBaseUrl=$officeUrl"
+            Write-Host "Embedding the Figaro Office synchronization address: $officeUrl"
+          }
+          $arguments += "installer/FleetSafetyManager.iss"
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" @arguments
+
       - name: Verify installer files
         shell: pwsh
         run: |
           $office = "installer/output/FleetSafetyManager_Office_Setup.exe"
           $ship = "installer/output/FleetSafetyManager_Ship_Setup.exe"
+          $figaro = "installer/output/FSM_Ship_Figaro_Setup.exe"
           if (-not (Test-Path $office)) { throw "Office installer is missing." }
           if (-not (Test-Path $ship)) { throw "Ship installer is missing." }
+          if (-not (Test-Path $figaro)) { throw "Personalized Figaro installer is missing." }
+          $testConnectionScript = "installer/Configure-FSM-Test-Connection.ps1"
+          if (-not (Test-Path $testConnectionScript)) { throw "Test connection helper is missing." }
+          $parseTokens = $null
+          $parseErrors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            (Resolve-Path $testConnectionScript),
+            [ref]$parseTokens,
+            [ref]$parseErrors
+          )
+          if ($parseErrors.Count -gt 0) {
+            throw "Test connection helper has PowerShell syntax errors: $($parseErrors -join '; ')"
+          }
+          $testConnectionText = Get-Content $testConnectionScript -Raw
+          @(
+            "'funnel', '--bg', '--yes'",
+            'FSM-Test-Connection-URL.txt',
+            'AdvertisedBaseUrl',
+            '/api/synchronization/health',
+            'databaseAvailable',
+            'synchronizationAvailable',
+            'Invoke-TailscaleCommand',
+            'RedirectStandardError',
+            'WaitForExit',
+            'TimedOut',
+            '-WindowStyle Hidden',
+            "'up', '--timeout=15s'"
+          ) | ForEach-Object {
+            if ($testConnectionText -notmatch [regex]::Escape($_)) {
+              throw "Test connection helper is missing required behavior: $_"
+            }
+          }
+          if ($testConnectionText -match '\$health\.status') {
+            throw 'Test connection helper validates the obsolete health response contract.'
+          }
           Get-FileHash $office -Algorithm SHA256
           Get-FileHash $ship -Algorithm SHA256
+          Get-FileHash $figaro -Algorithm SHA256
+
+      - name: Build account-free remote synchronization pilot
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $packageRoot = "pilot/output/FSM_Remote_Pilot"
+          $toolsRoot = "$packageRoot/RemotePilot"
+          New-Item -ItemType Directory -Path $toolsRoot -Force | Out-Null
+
+          $release = Invoke-RestMethod `
+            -Uri "https://api.github.com/repos/cloudflare/cloudflared/releases/latest" `
+            -Headers @{ "User-Agent" = "FleetSafetyManager-Build" }
+          $asset = $release.assets | Where-Object {
+            $_.name -eq "cloudflared-windows-amd64.exe"
+          } | Select-Object -First 1
+          if (-not $asset) {
+            throw "The official cloudflared Windows binary was not found."
+          }
+
+          $cloudflaredPath = "$toolsRoot/cloudflared.exe"
+          Invoke-WebRequest -Uri $asset.browser_download_url -OutFile $cloudflaredPath
+          if ($asset.digest -and $asset.digest -match '^sha256:(.+)$') {
+            $actualDigest = (Get-FileHash $cloudflaredPath -Algorithm SHA256).Hash.ToLowerInvariant()
+            if ($actualDigest -ne $Matches[1].ToLowerInvariant()) {
+              throw "The downloaded cloudflared checksum is invalid."
+            }
+          }
+
+          Copy-Item "pilot/*.ps1" $toolsRoot -Force
+          Copy-Item "pilot/*.cmd" $toolsRoot -Force
+          Copy-Item "pilot/README_RU.txt" $packageRoot -Force
+          Copy-Item "installer/output/FleetSafetyManager_Office_Setup.exe" $packageRoot -Force
+          Copy-Item "installer/output/FleetSafetyManager_Ship_Setup.exe" $packageRoot -Force
+
+          @(
+            "$toolsRoot/Start-FSM-Remote-Pilot.ps1",
+            "$toolsRoot/Connect-FSM-Ship-Pilot.ps1",
+            "$toolsRoot/Stop-FSM-Remote-Pilot.ps1",
+            "$toolsRoot/cloudflared.exe",
+            "$packageRoot/FleetSafetyManager_Office_Setup.exe",
+            "$packageRoot/FleetSafetyManager_Ship_Setup.exe"
+          ) | ForEach-Object {
+            if (-not (Test-Path $_)) { throw "Remote Pilot package is incomplete: $_" }
+          }
+
+          $startScript = Get-Content "$toolsRoot/Start-FSM-Remote-Pilot.ps1" -Raw
+          $shipScript = Get-Content "$toolsRoot/Connect-FSM-Ship-Pilot.ps1" -Raw
+          $shipInstallerScript = Get-Content "$toolsRoot/Install-FSM-Ship-Pilot.ps1" -Raw
+          if ($startScript -notmatch 'trycloudflare\\.com' -or
+              $startScript -notmatch 'Get-ActiveTunnelUrl' -or
+              $startScript -notmatch 'Get-ConfiguredTestAddress' -or
+              $startScript -notmatch 'FSM-Test-Connection-URL.txt' -or
+              $startScript -notmatch [regex]::Escape('FleetSafetyManager_Ship_Setup*.exe') -or
+              $shipScript -notmatch 'OfficeBaseUrl' -or
+              $shipScript -notmatch 'AllowInsecureHttp' -or
+              $shipInstallerScript -notmatch 'administrator approval was cancelled' -or
+              $shipInstallerScript -notmatch [regex]::Escape('if (-not $state.activated)')) {
+            throw "Remote Pilot zero-configuration scripts failed validation."
+          }
 
       - name: Upload installers
         uses: actions/upload-artifact@v4
@@ -167,4 +311,20 @@ jobs:
             installer/output/FleetSafetyManager_Office_Setup.exe
             installer/output/FleetSafetyManager_Ship_Setup.exe
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 30
+
+      - name: Upload personalized Figaro Ship installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: FSM-Ship-Figaro-One-Click-Installer
+          path: installer/output/FSM_Ship_Figaro_Setup.exe
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload account-free remote pilot
+        uses: actions/upload-artifact@v4
+        with:
+          name: FleetSafetyManager-RC20-Remote-Pilot
+          path: pilot/output/FSM_Remote_Pilot
+          if-no-files-found: error
+          retention-days: 30

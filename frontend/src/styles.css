@@ -595,6 +595,23 @@ button:disabled {
   margin: 20px 0;
 }
 
+.dashboard-cards.ship-dashboard-cards {
+  grid-template-columns: repeat(4, minmax(130px, 1fr));
+}
+
+.ship-dashboard-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.ship-dashboard-actions button {
+  min-height: 48px;
+  padding: 12px 20px;
+  font-size: 16px;
+  font-weight: 700;
+}
+
 .dashboard-card {
   min-height: 96px;
   padding: 15px;
@@ -724,6 +741,58 @@ button:disabled {
   border-radius: 12px;
   background: white;
 }
+
+.administration-dialog {
+  width: min(980px, 94vw);
+  max-height: 92vh;
+  overflow: auto;
+  background: #fff;
+  border-radius: 12px;
+  padding: 22px;
+  box-shadow: 0 24px 70px rgba(15, 23, 42, .28);
+}
+
+.administration-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 18px 0;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #dbe3ec;
+}
+
+.administration-tabs button.selected {
+  color: #fff;
+  background: #155e75;
+  border-color: #155e75;
+}
+
+.administration-content section {
+  display: grid;
+  gap: 14px;
+}
+
+.administration-content section > button {
+  justify-self: start;
+}
+
+.administration-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+}
+
+.administration-grid > div {
+  display: grid;
+  gap: 5px;
+  padding: 14px;
+  border: 1px solid #dbe3ec;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.administration-grid span { color: #64748b; font-size: 13px; }
+.warning-box { padding: 14px; border: 1px solid #f59e0b; border-radius: 8px; background: #fffbeb; }
 
 .activation-card {
   width: min(460px, calc(100vw - 2rem));
@@ -997,6 +1066,181 @@ button:disabled {
     grid-template-columns: 1fr;
   }
 }
+
+.medicine-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 18px;
+}
+
+.medicine-summary > div {
+  display: flex;
+  min-height: 76px;
+  flex-direction: column;
+  justify-content: center;
+  padding: 12px 16px;
+  border: 1px solid #d9dee5;
+  border-radius: 9px;
+  background: #f8fafc;
+}
+
+.medicine-summary strong {
+  font-size: 22px;
+}
+
+.medicine-summary span {
+  margin-top: 3px;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.medicine-summary .attention {
+  border-color: #fbbf24;
+  background: #fffbeb;
+}
+
+.medicine-navigation {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+  padding-bottom: 12px;
+  overflow-x: auto;
+  border-bottom: 1px solid #d9dee5;
+}
+
+.medicine-navigation button.selected,
+.medicine-filters button.selected {
+  background: #1f5bd8;
+  color: white;
+}
+
+.medicine-dialog .medicine-register {
+  padding: 0;
+  border: 0;
+}
+
+.medicine-toolbar,
+.section-heading,
+.medicine-import {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.medicine-toolbar input {
+  min-width: 260px;
+  flex: 1;
+  padding: 10px;
+  border: 1px solid #d9dee5;
+  border-radius: 7px;
+}
+
+.medicine-filters {
+  display: flex;
+  gap: 7px;
+  margin-top: 12px;
+  overflow-x: auto;
+}
+
+.medicine-filters button {
+  white-space: nowrap;
+}
+
+.section-heading {
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 16px;
+}
+
+.section-heading p {
+  margin: 5px 0 0;
+}
+
+.medicine-settings {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.medicine-settings label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid #d9dee5;
+  border-radius: 8px;
+}
+
+.medicine-settings label:last-child {
+  align-items: flex-start;
+  flex-direction: column;
+}
+
+.medicine-settings input[type="number"] {
+  width: 100%;
+  padding: 9px;
+  border: 1px solid #d9dee5;
+  border-radius: 7px;
+}
+
+.medicine-import {
+  align-items: stretch;
+}
+
+.medicine-import input {
+  flex: 1;
+  padding: 10px;
+  border: 1px dashed #94a3b8;
+  border-radius: 8px;
+  background: #f8fafc;
+}
+
+.import-preview {
+  max-height: 340px;
+  margin-top: 16px;
+  overflow: auto;
+  padding: 14px;
+  border: 1px solid #d9dee5;
+  border-radius: 8px;
+}
+
+.medicine-status-missing,
+.medicine-status-overdue-expired {
+  background: #fee2e2;
+  color: #991b1b;
+}
+
+.medicine-status-soon {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.medicine-status-ok {
+  background: #dcfce7;
+  color: #166534;
+}
+
+@media (max-width: 760px) {
+  .medicine-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .medicine-toolbar,
+  .section-heading,
+  .medicine-import {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .medicine-toolbar input {
+    min-width: 0;
+  }
+
+  .medicine-settings {
+    grid-template-columns: 1fr;
+  }
+}
 .superintendent-vessels-row > td {
   padding: 14px;
   background: #f7f9fc;
@@ -1015,4 +1259,176 @@ button:disabled {
   gap: 3px;
   padding: 12px;
   text-align: left;
+}
+
+/* Medicine Chest */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgba(15, 23, 42, 0.52);
+}
+
+.modal-card {
+  width: min(920px, 100%);
+  max-height: 92vh;
+  overflow: auto;
+  padding: 22px;
+  border: 1px solid #d9dee5;
+  border-radius: 12px;
+  background: white;
+  box-shadow: 0 20px 55px rgba(15, 23, 42, 0.24);
+}
+
+.wide-modal {
+  width: min(1120px, 100%);
+}
+
+.modal-header {
+  position: sticky;
+  top: -22px;
+  z-index: 4;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  margin: -22px -22px 0;
+  padding: 22px;
+  border-bottom: 1px solid #d9dee5;
+  background: white;
+}
+
+.modal-header h2,
+.wide-modal section h3 {
+  margin: 0;
+}
+
+.modal-header p {
+  margin: 5px 0 0;
+  color: #6b7280;
+}
+
+.wide-modal section {
+  margin-top: 18px;
+  padding: 18px;
+  border: 1px solid #d9dee5;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.wide-modal section > h3 {
+  margin-bottom: 14px;
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.form-grid label {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 5px;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.form-grid label:has(> input[type="checkbox"]) {
+  align-items: center;
+  align-self: end;
+  min-height: 39px;
+  flex-direction: row;
+  color: #374151;
+}
+
+.form-grid input:not([type="checkbox"]),
+.form-grid select,
+.form-grid textarea {
+  width: 100%;
+  min-width: 0;
+  padding: 9px;
+  border: 1px solid #d9dee5;
+  border-radius: 7px;
+  color: #1f2937;
+  background: white;
+  font: inherit;
+}
+
+.form-grid input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
+}
+
+.wide-modal .workspace-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.wide-modal .workspace-actions h3 {
+  margin-right: auto;
+}
+
+.wide-modal .table-scroll {
+  height: auto;
+  max-height: 360px;
+  margin-top: 12px;
+  border: 1px solid #d9dee5;
+  border-radius: 8px;
+}
+
+.wide-modal .table-scroll table {
+  min-width: 820px;
+}
+
+.wide-modal .table-scroll td small {
+  display: block;
+  margin-top: 3px;
+  color: #6b7280;
+}
+
+.notice {
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  color: #1e3a8a;
+  background: #eff6ff;
+}
+
+@media (max-width: 960px) {
+  .form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .modal-backdrop {
+    padding: 8px;
+  }
+
+  .modal-card {
+    max-height: 96vh;
+    padding: 16px;
+  }
+
+  .modal-header {
+    top: -16px;
+    margin: -16px -16px 0;
+    padding: 16px;
+  }
+
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .wide-modal section {
+    padding: 14px;
+  }
 }

@@ -52,6 +52,9 @@ if ($installer -notmatch "0: FolderName := 'Data'" -or
     $installer -notmatch "1: FolderName := 'Documents'") {
     throw "Upgrade does not preserve databases and documents."
 }
+if ($installer.IndexOf('CopyPersistentConfiguration(OldReleasePath, NewReleasePath)', [StringComparison]::Ordinal) -lt 0) {
+    throw "Upgrade does not preserve the existing connection configuration."
+}
 if ($command -notmatch 'FleetSafetyManagerLauncher\.exe') {
     throw "Launch Fleet Safety Manager.cmd does not call the common launcher."
 }

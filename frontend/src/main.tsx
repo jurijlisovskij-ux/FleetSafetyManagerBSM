@@ -373,8 +373,8 @@ type ActivationVesselItem = {
 function App() {
   const [activationState, setActivationState] =
     useState<ActivationState | null>(null);
-  const [username, setUsername] = useState("superintendent@fsm.local");
-  const [password, setPassword] = useState("Super123!");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
   const [user, setUser] = useState<LoginResult | null>(null);
   const [vessels, setVessels] = useState<Vessel[]>([]);
   const [dashboard, setDashboard] = useState<DashboardData | null>(null);
@@ -399,20 +399,20 @@ function App() {
     useState(false);
   const [showUserAdministration, setShowUserAdministration] =
     useState(false);
-  const [showCopyEquipment, setShowCopyEquipment] =
-    useState(false);
   const [showSynchronization, setShowSynchronization] =
     useState(false);
   const [showAdvancedDiagnostics, setShowAdvancedDiagnostics] =
+    useState(false);
+  const [showAdministration, setShowAdministration] =
     useState(false);
   const [showMedicine, setShowMedicine] = useState(false);
   const [collapsed, setCollapsed] =
     useState<Set<Equipment["category"]>>(new Set());
   const [error, setError] = useState("");
+  const [synchronizationMessage, setSynchronizationMessage] =
+    useState("");
   const [busy, setBusy] = useState(false);
   const [showRecovery, setShowRecovery] = useState(false);
-  const [recoveryFile, setRecoveryFile] = useState<File | null>(null);
-  const [newPassword, setNewPassword] = useState("");
 
   async function refreshActivationState() {
     const response = await fetch(
@@ -428,6 +428,18 @@ function App() {
     void refreshActivationState()
       .catch(error => setError((error as Error).message));
   }, []);
+
+  useEffect(() => {
+    if (!activationState) return;
+    if (activationState.edition === "Ship") {
+      setUsername("crew@fsm.local");
+      setPassword("Crew123!");
+      setShowRecovery(false);
+      return;
+    }
+    setUsername("superintendent@fsm.local");
+    setPassword("Super123!");
+  }, [activationState?.edition]);
 
   async function refreshFleetData() {
     if (!user) return;
@@ -453,6 +465,33 @@ function App() {
     setVessels(vesselItems);
     setDashboard(dashboardData);
 
+  }
+
+  async function synchronizeShipNow(vesselId: string) {
+    if (!user) return;
+    setBusy(true);
+    setError("");
+    setSynchronizationMessage("");
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/synchronization/run/${vesselId}`,
+        user.token,
+        { method: "POST" },
+      );
+      const body = await response.json().catch(() => null);
+      if (!response.ok)
+        throw new Error(body?.message ?? "Synchronization failed.");
+      await refreshFleetData();
+      setSynchronizationMessage("Synchronization completed successfully.");
+    } catch (exception) {
+      const detail = (exception as Error).message;
+      setError(detail.toLowerCase().includes("connect") ||
+          detail.toLowerCase().includes("network")
+        ? "No Internet connection. Synchronization will continue automatically when the connection is restored."
+        : detail);
+    } finally {
+      setBusy(false);
+    }
   }
 
   useEffect(() => {
@@ -492,6 +531,9 @@ function App() {
   const singleVesselDashboard =
     (dashboard?.vesselRows.length ?? 0) === 1;
   const showUpcomingVesselColumn = user?.role === "OfficeAdmin";
+  const shipDashboardVessel = user?.edition === "Ship"
+    ? vessels[0] ?? null
+    : null;
 
   if (!activationState) {
     return <div className="login-page"><div className="card"><h1>Fleet Safety Manager</h1><p>Starting...</p>{error && <div className="error">{error}</div>}</div></div>;
@@ -508,13 +550,21 @@ function App() {
           className="card"
           onSubmit={async event => {
             event.preventDefault();
+            const formData = new FormData(event.currentTarget);
+            const submittedUsername =
+              String(formData.get("username") ?? username);
+            const submittedPassword =
+              String(formData.get("password") ?? password);
             setBusy(true);
             setError("");
             try {
               const response = await fetch(`${apiBaseUrl}/auth/login`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ username, password }),
+                body: JSON.stringify({
+                  username: submittedUsername,
+                  password: submittedPassword,
+                }),
               });
 
               if (!response.ok) {
@@ -531,43 +581,26 @@ function App() {
           }}
         >
           <h1>Fleet Safety Manager</h1>
+          <p><strong>{activationState.edition === "Ship"
+            ? "Ship Edition"
+            : "Office Edition"}</strong></p>
           {error && <div className="error">{error}</div>}
-          <label>Username<input value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" /></label>
-          <label>Password<input type="password" value={password} onChange={e => setPassword(e.target.value)} /></label>
+          <label>Username<input name="username" value={username} onChange={e => setUsername(e.target.value)} autoComplete="username" /></label>
+          <label>Password<input name="password" type="password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" /></label>
           <button className="primary" disabled={busy}>
             {busy ? "Signing in..." : "Sign In"}
           </button>
-          <button type="button" onClick={() => setShowRecovery(value => !value)}>Forgot administrator password?</button>
-          {showRecovery && <>
-            <p>Local access and the active FSM-Recovery.fsmkey are required.</p>
-            <input type="file" accept=".fsmkey" onChange={event => setRecoveryFile(event.target.files?.[0] ?? null)} />
-            <input type="password" placeholder="New administrator password" value={newPassword} onChange={event => setNewPassword(event.target.value)} />
-            <button type="button" disabled={!recoveryFile || newPassword.length < 8} onClick={async () => {
-              const form = new FormData(); form.append("recoveryFile", recoveryFile!); form.append("newPassword", newPassword);
-              const response = await fetch(`${apiBaseUrl}/auth/emergency-recovery`, { method: "POST", body: form });
-              const body = await response.json().catch(() => null); setError(body?.message ?? "Recovery failed.");
-            }}>Emergency Recovery</button>
+          {activationState.edition === "Office" && <>
+            <button type="button" onClick={() => setShowRecovery(value => !value)}>Forgot administrator password?</button>
+            {showRecovery && <div className="warning-box">
+              <strong>Reset the password on the Office PC</strong>
+              <p>Open the Windows Start menu, select <strong>Fleet Safety Manager</strong>, then run <strong>Reset FSM Administrator Password</strong>.</p>
+              <p>Approve the Windows administrator prompt and enter the new password twice. Email and recovery codes are not required.</p>
+            </div>}
           </>}
         </form>
       </div>
     );
-  }
-
-  if (user.forcePasswordChange) {
-    return <div className="login-page"><form className="card" onSubmit={async event => {
-      event.preventDefault();
-      const response = await authFetch(`${apiBaseUrl}/auth/change-password`, user.token, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ currentPassword: password, newPassword }),
-      });
-      const body = await response.json().catch(() => null);
-      if (!response.ok) { setError(body?.message ?? "Unable to change password."); return; }
-      setUser({ ...user, forcePasswordChange: false });
-      setPassword(newPassword);
-    }}><h1>Change temporary password</h1>{error && <div className="error">{error}</div>}
-      <label>New password<input type="password" value={newPassword} onChange={event => setNewPassword(event.target.value)} /></label>
-      <button className="primary" disabled={newPassword.length < 8}>Change Password</button>
-    </form></div>;
   }
 
   return (
@@ -575,9 +608,13 @@ function App() {
       <header className="topbar">
         <div><strong>Fleet Safety Manager</strong><span>Version RC20</span></div>
         <div className="session">
-          <span>{user.fullName} · {user.role}</span>
+          <span>
+            {user.edition === "Ship"
+              ? user.role
+              : `${user.fullName} · ${user.role}`}
+          </span>
           <button onClick={() => setShowSynchronization(true)}>
-            Settings
+            {user.edition === "Ship" ? "Synchronization" : "Settings"}
           </button>
           {currentVessel && user.edition !== "Ship" &&
             <button
@@ -589,6 +626,10 @@ function App() {
               }}
             >
               Dashboard
+            </button>}
+          {user.role === "OfficeAdmin" &&
+            <button onClick={() => setShowAdministration(true)}>
+              Administration
             </button>}
           {user.role === "OfficeAdmin" &&
             <button
@@ -612,9 +653,9 @@ function App() {
             setShowVesselProfile(false);
             setShowCreateVessel(false);
             setShowUserAdministration(false);
-            setShowCopyEquipment(false);
             setShowSynchronization(false);
             setShowAdvancedDiagnostics(false);
+            setShowAdministration(false);
           }}>Sign Out</button>
         </div>
       </header>
@@ -623,8 +664,17 @@ function App() {
         <main className="dashboard-page">
           <div className="dashboard-heading">
             <div>
-              <h1>Dashboard</h1>
-              <p className="muted">Fleet equipment status.</p>
+              <h1>
+                Dashboard
+                {shipDashboardVessel
+                  ? ` — ${shipDashboardVessel.vesselName}`
+                  : ""}
+              </h1>
+              <p className="muted">
+                {user.edition === "Ship"
+                  ? "Vessel equipment status."
+                  : "Fleet equipment status."}
+              </p>
             </div>
             {user.role === "OfficeAdmin" &&
               <button
@@ -636,12 +686,15 @@ function App() {
           </div>
 
           {error && <div className="error">{error}</div>}
+          {synchronizationMessage &&
+            <div className="success-message">{synchronizationMessage}</div>}
 
-          <div className="dashboard-cards">
-            <button className="dashboard-card" onClick={() => setDashboardFilter("All")}>
-              <span>Vessels</span>
-              <strong>{dashboard?.vessels ?? vessels.length}</strong>
-            </button>
+          <div className={`dashboard-cards ${user.edition === "Ship" ? "ship-dashboard-cards" : ""}`}>
+            {user.edition !== "Ship" &&
+              <button className="dashboard-card" onClick={() => setDashboardFilter("All")}>
+                <span>Vessels</span>
+                <strong>{dashboard?.vessels ?? vessels.length}</strong>
+              </button>}
             <button className="dashboard-card" onClick={() => setDashboardFilter("All")}>
               <span>Equipment</span>
               <strong>{dashboard?.equipment ?? 0}</strong>
@@ -660,6 +713,41 @@ function App() {
             </button>
           </div>
 
+          {user.edition === "Ship" ? (
+            <div className="ship-dashboard-actions">
+              <button
+                className="primary"
+                disabled={!shipDashboardVessel}
+                onClick={() => {
+                  if (shipDashboardVessel)
+                    setCurrentVessel(shipDashboardVessel);
+                }}
+              >
+                Vessel Equipment Status
+              </button>
+              <button
+                className="primary"
+                disabled={!shipDashboardVessel}
+                onClick={() => {
+                  if (!shipDashboardVessel) return;
+                  setCurrentVessel(shipDashboardVessel);
+                  setShowAddEquipment(true);
+                }}
+              >
+                Add Equipment
+              </button>
+              <button
+                className="primary"
+                disabled={!shipDashboardVessel || busy}
+                onClick={() => {
+                  if (shipDashboardVessel)
+                    void synchronizeShipNow(shipDashboardVessel.id);
+                }}
+              >
+                {busy ? "Synchronizing..." : "Synchronize Now"}
+              </button>
+            </div>
+          ) : (
           <section className="dashboard-section">
             <div className="dashboard-section-heading">
               <h2>Fleet Status</h2>
@@ -707,6 +795,7 @@ function App() {
                   </table>
                 </div>}
           </section>
+          )}
 
           {user.role === "OfficeAdmin" ? (
           <section className="dashboard-section">
@@ -805,7 +894,8 @@ function App() {
           </section>
           )}
 
-          <section className="dashboard-section">
+          {user.edition !== "Ship" &&
+            <section className="dashboard-section">
               <div className="dashboard-section-heading">
                 <h2>Synchronization Status</h2>
               </div>
@@ -846,7 +936,7 @@ function App() {
                   </tbody>
                 </table>
               </div>
-            </section>
+            </section>}
         </main>
       ) : (
         <main className="workspace">
@@ -864,10 +954,9 @@ function App() {
             setShowAddEquipment(false);
             setShowVesselProfile(false);
             setShowUserAdministration(false);
-            setShowCopyEquipment(false);
                 }}
               >
-                ← Assigned Vessels
+                ← Back
               </button>
               <h1>{currentVessel.vesselName}</h1>
               <p className="muted">
@@ -885,10 +974,6 @@ function App() {
               <button onClick={() => setShowMedicine(true)}>
                 Medicine Chest
               </button>
-              {user.role === "OfficeAdmin" &&
-                <button onClick={() => setShowCopyEquipment(true)}>
-                  Copy Equipment List
-                </button>}
               <button
                 className="primary"
                 onClick={() => setShowAddEquipment(true)}
@@ -1065,30 +1150,6 @@ function App() {
           vessel={currentVessel}
           onClose={() => setShowMedicine(false)}
         />}
-      {showCopyEquipment &&
-        currentVessel &&
-        user.role === "OfficeAdmin" &&
-        <CopyEquipmentDialog
-          token={user.token}
-          targetVessel={currentVessel}
-          vessels={vessels}
-          onClose={() => setShowCopyEquipment(false)}
-          onCompleted={async () => {
-            const response = await authFetch(
-              `${apiBaseUrl}/vessels/${currentVessel.id}/equipment`,
-              user.token,
-            );
-            if (!response.ok)
-              throw new Error("Unable to refresh equipment.");
-
-            const items: Equipment[] = await response.json();
-            setEquipment(items);
-            setSelected(items[0] ?? null);
-            setSelectedForRequest(new Set());
-            setShowCopyEquipment(false);
-          }}
-        />}
-
       {showUserAdministration &&
         user.role === "OfficeAdmin" &&
         <UserAdministrationDialog
@@ -1115,7 +1176,6 @@ function App() {
             setCurrentVessel(updated);
             setShowVesselProfile(false);
             setShowUserAdministration(false);
-            setShowCopyEquipment(false);
           }}
         />}
 
@@ -1143,7 +1203,6 @@ function App() {
             setShowAddEquipment(false);
             setShowVesselProfile(false);
             setShowUserAdministration(false);
-            setShowCopyEquipment(false);
           }}
         />}
 
@@ -1160,7 +1219,6 @@ function App() {
             setShowAddEquipment(false);
             setShowVesselProfile(false);
             setShowUserAdministration(false);
-            setShowCopyEquipment(false);
             setSelectedForRequest(new Set());
           }}
         />}
@@ -1179,7 +1237,6 @@ function App() {
             setShowAddEquipment(false);
             setShowVesselProfile(false);
             setShowUserAdministration(false);
-            setShowCopyEquipment(false);
             setSelectedForRequest(new Set());
           }}
         />}
@@ -1188,6 +1245,7 @@ function App() {
         user.role === "OfficeAdmin" &&
         <CreateVesselDialog
           token={user.token}
+          vessels={vessels}
           onClose={() => setShowCreateVessel(false)}
           onCreated={async () => {
             await refreshFleetData();
@@ -1232,8 +1290,146 @@ function App() {
           }}
         />}
 
+      {showAdministration && user.role === "OfficeAdmin" &&
+        <AdministrationDialog
+          token={user.token}
+          onClose={() => setShowAdministration(false)}
+          onSynchronizationDiagnostics={() => {
+            setShowAdministration(false);
+            setShowAdvancedDiagnostics(true);
+          }}
+        />}
+
     </div>
   );
+}
+
+type AdministrationOverview = {
+  applicationVersion: string;
+  edition: string;
+  environment: string;
+  machineName: string;
+  databasePath: string;
+  databaseSizeBytes: number;
+  databaseLastWriteUtc?: string;
+  lastAuditUtc?: string;
+  pendingRestore: boolean;
+  serverTimeUtc: string;
+};
+
+type AdministrationHealth = {
+  status: string;
+  database: string;
+  integrity: string;
+  documentsDirectory: boolean;
+  freeSpaceBytes: number;
+  checkedUtc: string;
+};
+
+function AdministrationDialog({ token, onClose, onSynchronizationDiagnostics }: {
+  token: string;
+  onClose: () => void;
+  onSynchronizationDiagnostics: () => void;
+}) {
+  const [tab, setTab] = useState<"settings" | "backup" | "health" | "audit" | "maintenance" | "diagnostics">("settings");
+  const [overview, setOverview] = useState<AdministrationOverview | null>(null);
+  const [health, setHealth] = useState<AdministrationHealth | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [restoreFile, setRestoreFile] = useState<File | null>(null);
+  const [retentionDays, setRetentionDays] = useState(365);
+
+  async function load() {
+    const [overviewResponse, healthResponse] = await Promise.all([
+      authFetch(`${apiBaseUrl}/administration/overview`, token, { cache: "no-store" }),
+      authFetch(`${apiBaseUrl}/administration/health`, token, { cache: "no-store" }),
+    ]);
+    if (!overviewResponse.ok || !healthResponse.ok)
+      throw new Error("Unable to load administration status.");
+    setOverview(await overviewResponse.json());
+    setHealth(await healthResponse.json());
+  }
+
+  useEffect(() => { void load().catch(exception => setError((exception as Error).message)); }, []);
+
+  async function action(url: string, options?: RequestInit) {
+    setBusy(true); setError(""); setMessage("");
+    try {
+      const response = await authFetch(`${apiBaseUrl}${url}`, token, options);
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.message ?? "Administration operation failed.");
+      setMessage(body?.message ?? "Operation completed.");
+      await load();
+    } catch (exception) { setError((exception as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function download(url: string, fallbackName: string) {
+    setBusy(true); setError("");
+    try {
+      const response = await authFetch(`${apiBaseUrl}${url}`, token);
+      if (!response.ok) throw new Error("Unable to create the requested export.");
+      const blob = await response.blob();
+      const disposition = response.headers.get("content-disposition") ?? "";
+      const fileName = /filename\*?=(?:UTF-8''|\")?([^\";]+)/i.exec(disposition)?.[1] ?? fallbackName;
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob); link.download = decodeURIComponent(fileName); link.click();
+      URL.revokeObjectURL(link.href);
+      setMessage("Export created successfully.");
+    } catch (exception) { setError((exception as Error).message); }
+    finally { setBusy(false); }
+  }
+
+  async function stageRestore() {
+    if (!restoreFile) return;
+    const form = new FormData(); form.append("file", restoreFile);
+    await action("/administration/restore", { method: "POST", body: form });
+  }
+
+  const size = (bytes?: number) => bytes == null ? "—" : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  const tabs = [
+    ["settings", "Settings"], ["backup", "Backup / Restore"], ["health", "Health"],
+    ["audit", "Audit"], ["maintenance", "Maintenance"], ["diagnostics", "Diagnostics"],
+  ] as const;
+
+  return <div className="modal"><div className="administration-dialog">
+    <div className="service-request-header"><div><h2>Administration</h2><p>Deployment, backup and system maintenance</p></div><button onClick={onClose}>Close</button></div>
+    <div className="administration-tabs">{tabs.map(([key, label]) =>
+      <button key={key} className={tab === key ? "selected" : ""} onClick={() => setTab(key)}>{label}</button>)}</div>
+    {error && <div className="error">{error}</div>}{message && <div className="success-message">{message}</div>}
+    <div className="administration-content">
+      {tab === "settings" && <section><h3>Application Settings</h3><div className="administration-grid">
+        <div><span>Version</span><strong>{overview?.applicationVersion ?? "RC20"}</strong></div>
+        <div><span>Edition</span><strong>{overview?.edition ?? "—"}</strong></div>
+        <div><span>Environment</span><strong>{overview?.environment ?? "—"}</strong></div>
+        <div><span>Computer</span><strong>{overview?.machineName ?? "—"}</strong></div>
+      </div><hr/><h3>Administrator Password Recovery</h3>
+        <p>On the Office PC, open the Windows Start menu and run <strong>Reset FSM Administrator Password</strong> from the Fleet Safety Manager folder.</p>
+        <p className="muted">Windows administrator approval is required. Gmail, verification codes and recovery keys are not used.</p>
+        <hr/><p className="muted">Synchronization settings remain available from the Settings button in the main header.</p></section>}
+      {tab === "backup" && <section><h3>Backup / Restore</h3>
+        <p>Create a consistent database backup before updates or maintenance.</p>
+        <button className="primary" disabled={busy} onClick={() => download("/administration/backup", "FSM-Backup.db")}>Download Backup</button>
+        <hr/><label>Restore from an FSM database backup<input type="file" accept=".db,application/octet-stream" onChange={event => setRestoreFile(event.target.files?.[0] ?? null)}/></label>
+        <button disabled={busy || !restoreFile} onClick={stageRestore}>Validate and Stage Restore</button>
+        {overview?.pendingRestore && <div className="warning-box"><strong>Restore pending.</strong><p>Restart Fleet Safety Manager to apply it. The current database will be backed up automatically.</p><button onClick={() => action("/administration/restore/pending", { method: "DELETE" })}>Cancel Pending Restore</button></div>}
+      </section>}
+      {tab === "health" && <section><h3>System Health</h3><div className="administration-grid">
+        <div><span>Overall status</span><strong>{health?.status ?? "Checking…"}</strong></div>
+        <div><span>Database</span><strong>{health?.database ?? "—"}</strong></div>
+        <div><span>Integrity check</span><strong>{health?.integrity ?? "—"}</strong></div>
+        <div><span>Free disk space</span><strong>{size(health?.freeSpaceBytes)}</strong></div>
+        <div><span>Database size</span><strong>{size(overview?.databaseSizeBytes)}</strong></div>
+        <div><span>Documents directory</span><strong>{health?.documentsDirectory ? "Available" : "Not created yet"}</strong></div>
+      </div><button disabled={busy} onClick={() => load().catch(exception => setError((exception as Error).message))}>Refresh Health</button></section>}
+      {tab === "audit" && <section><h3>Audit</h3><p>Export the complete administrative audit log as CSV.</p><button className="primary" disabled={busy} onClick={() => download("/administration/audit/export", "FSM-Audit.csv")}>Export Audit CSV</button></section>}
+      {tab === "maintenance" && <section><h3>Maintenance</h3><button disabled={busy} onClick={() => action("/administration/maintenance/optimize", { method: "POST" })}>Optimize Database</button>
+        <label>Audit retention (days)<input type="number" min={30} max={3650} value={retentionDays} onChange={event => setRetentionDays(Number(event.target.value))}/></label>
+        <button disabled={busy} onClick={() => { if (window.confirm(`Remove audit records older than ${retentionDays} days?`)) void action(`/administration/maintenance/audit?retentionDays=${retentionDays}`, { method: "DELETE" }); }}>Remove Old Audit Records</button></section>}
+      {tab === "diagnostics" && <section><h3>Diagnostics</h3><p>Export a support package without passwords, tokens or database contents.</p><button className="primary" disabled={busy} onClick={() => download("/administration/diagnostics", "FSM-Diagnostics.zip")}>Export System Diagnostics</button><button disabled={busy} onClick={onSynchronizationDiagnostics}>Open Synchronization Diagnostics</button></section>}
+    </div>
+  </div></div>;
 }
 
 
@@ -1357,6 +1553,10 @@ function SettingsSynchronizationDialog({
           <div><span>Next synchronization</span><strong>{next}</strong></div>
           <div><span>Pending changes</span><strong>{selected.pendingChanges}</strong></div>
         </div>}
+        {selected?.lastError &&
+          <div className="error synchronization-detail">
+            <strong>Technical reason:</strong> {selected.lastError}
+          </div>}
         {busy && <div className="manual-sync-window" aria-live="polite">
           <strong>Synchronizing...</strong>
           <div className="indeterminate-progress"><span /></div>
@@ -1926,203 +2126,6 @@ function SynchronizationDialog({
   );
 }
 
-type CopyMode = "AddOnlyNew" | "ReplaceExisting";
-
-function CopyEquipmentDialog({
-  token,
-  targetVessel,
-  vessels,
-  onClose,
-  onCompleted,
-}: {
-  token: string;
-  targetVessel: Vessel;
-  vessels: Vessel[];
-  onClose: () => void;
-  onCompleted: () => Promise<void>;
-}) {
-  const sourceOptions = vessels.filter(
-    vessel => vessel.id !== targetVessel.id,
-  );
-
-  const [sourceVesselId, setSourceVesselId] =
-    useState(sourceOptions[0]?.id ?? "");
-  const [mode, setMode] =
-    useState<CopyMode>("AddOnlyNew");
-  const [copyBusy, setCopyBusy] = useState(false);
-  const [copyError, setCopyError] = useState("");
-  const [copyResult, setCopyResult] = useState<{
-    sourceCount: number;
-    added: number;
-    skipped: number;
-    removed: number;
-  } | null>(null);
-
-  async function copyEquipment() {
-    if (!sourceVesselId) {
-      setCopyError("Select a source vessel.");
-      return;
-    }
-
-    const message =
-      mode === "ReplaceExisting"
-        ? "Delete all target equipment and documents, then copy the source list?"
-        : "Copy new equipment from the selected vessel?";
-
-    if (!window.confirm(message))
-      return;
-
-    setCopyBusy(true);
-    setCopyError("");
-
-    try {
-      const response = await authFetch(
-        `${apiBaseUrl}/vessels/${targetVessel.id}/copy-equipment`,
-        token,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            sourceVesselId,
-            mode: mode === "AddOnlyNew" ? 0 : 1,
-          }),
-        },
-      );
-
-      if (!response.ok) {
-        const body = await response.json().catch(() => null);
-        throw new Error(body?.message ?? "Unable to copy equipment.");
-      }
-
-      setCopyResult(await response.json());
-    } catch (exception) {
-      setCopyError((exception as Error).message);
-    } finally {
-      setCopyBusy(false);
-    }
-  }
-
-  return (
-    <div className="modal">
-      <div className="copy-equipment-dialog">
-        <div className="service-request-header">
-          <div>
-            <h2>Copy Equipment List</h2>
-            <p>
-              Target: {targetVessel.vesselName}
-              {" · "}IMO {targetVessel.imoNumber}
-            </p>
-          </div>
-          <button type="button" onClick={onClose}>
-            Close
-          </button>
-        </div>
-
-        {copyError && <div className="error">{copyError}</div>}
-
-        {copyResult
-          ? (
-            <>
-              <div className="copy-result">
-                <h3>Equipment copied</h3>
-                <dl>
-                  <dt>Source positions</dt>
-                  <dd>{copyResult.sourceCount}</dd>
-                  <dt>Added</dt>
-                  <dd>{copyResult.added}</dd>
-                  <dt>Skipped</dt>
-                  <dd>{copyResult.skipped}</dd>
-                  <dt>Removed</dt>
-                  <dd>{copyResult.removed}</dd>
-                </dl>
-              </div>
-              <div className="service-request-actions">
-                <button className="primary" onClick={onCompleted}>
-                  Done
-                </button>
-              </div>
-            </>
-          )
-          : (
-            <>
-              {sourceOptions.length === 0
-                ? (
-                  <div className="empty-state">
-                    Add another vessel before copying.
-                  </div>
-                )
-                : (
-                  <div className="copy-equipment-form">
-                    <label>
-                      Source Vessel *
-                      <select
-                        value={sourceVesselId}
-                        onChange={event =>
-                          setSourceVesselId(event.target.value)}
-                      >
-                        {sourceOptions.map(vessel => (
-                          <option key={vessel.id} value={vessel.id}>
-                            {vessel.vesselName}
-                            {" · "}IMO {vessel.imoNumber}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-
-                    <fieldset>
-                      <legend>Copy mode</legend>
-
-                      <label className="attachment-option">
-                        <input
-                          type="radio"
-                          name="copy-mode"
-                          checked={mode === "AddOnlyNew"}
-                          onChange={() => setMode("AddOnlyNew")}
-                        />
-                        Add only new equipment
-                      </label>
-
-                      <label className="attachment-option">
-                        <input
-                          type="radio"
-                          name="copy-mode"
-                          checked={mode === "ReplaceExisting"}
-                          onChange={() => setMode("ReplaceExisting")}
-                        />
-                        Replace existing list
-                      </label>
-                    </fieldset>
-
-                    <div className="copy-fields-note">
-                      <strong>Copied:</strong> Category, Equipment Name,
-                      Maker, Model and Inspection By.
-                      <br />
-                      <strong>Not copied:</strong> Quantity, Serial Number,
-                      Expiry Date, Remarks, Reports and Certificates.
-                    </div>
-                  </div>
-                )}
-
-              <div className="service-request-actions">
-                <button type="button" onClick={onClose}>
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="primary"
-                  disabled={copyBusy || sourceOptions.length === 0}
-                  onClick={copyEquipment}
-                >
-                  {copyBusy ? "Copying..." : "Copy Equipment"}
-                </button>
-              </div>
-            </>
-          )}
-      </div>
-    </div>
-  );
-}
-
 function UserAdministrationDialog({
   token,
   onClose,
@@ -2148,7 +2151,6 @@ function UserAdministrationDialog({
     useState(false);
   const [administrationError, setAdministrationError] =
     useState("");
-  const [temporaryPassword, setTemporaryPassword] = useState(true);
 
   const isNew = !draft.id;
 
@@ -2259,7 +2261,7 @@ function UserAdministrationDialog({
                   : 2,
             isActive: draft.isActive,
             password: isNew ? draft.password : null,
-            forcePasswordChange: isNew && temporaryPassword,
+            forcePasswordChange: false,
             vesselIds:
               draft.role === "OfficeAdmin"
                 ? []
@@ -2309,7 +2311,7 @@ function UserAdministrationDialog({
     setAdministrationBusy(true);
     const response = await authFetch(`${apiBaseUrl}/users/${draft.id}/reset-password`, token, {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: draft.password, temporaryPassword }),
+      body: JSON.stringify({ password: draft.password }),
     });
     const body = await response.json().catch(() => null);
     setAdministrationBusy(false);
@@ -2349,20 +2351,6 @@ function UserAdministrationDialog({
             <p>
               Roles and vessel access.
             </p>
-            <button type="button" onClick={() => void authFetch(`${apiBaseUrl}/auth/recovery-key`, token).then(async response => {
-              if (!response.ok) throw new Error("Unable to export recovery key.");
-              const url = URL.createObjectURL(await response.blob());
-              const link = document.createElement("a"); link.href = url; link.download = "FSM-Recovery.fsmkey"; link.click(); URL.revokeObjectURL(url);
-            }).catch(error => setAdministrationError((error as Error).message))}>Export Recovery Key</button>
-            <button type="button" onClick={() => {
-              if (!window.confirm("Rotate recovery key and invalidate the old key?")) return;
-              void authFetch(`${apiBaseUrl}/auth/recovery-key/rotate`, token, { method: "POST" }).then(async response => {
-                if (!response.ok) throw new Error("Unable to rotate recovery key.");
-                const url = URL.createObjectURL(await response.blob());
-                const link = document.createElement("a"); link.href = url; link.download = "FSM-Recovery.fsmkey"; link.click(); URL.revokeObjectURL(url);
-                setAdministrationError("Recovery key rotated successfully.");
-              }).catch(error => setAdministrationError((error as Error).message));
-            }}>Rotate Recovery Key</button>
           </div>
 
           <button
@@ -2450,7 +2438,7 @@ function UserAdministrationDialog({
             </label>
 
             <label>
-              Email (optional)
+              {draft.role === "OfficeAdmin" ? "Registered recovery email *" : "Email (optional)"}
               <input
                 type="email"
                 value={draft.email}
@@ -2485,21 +2473,13 @@ function UserAdministrationDialog({
               </select>
             </label>
 
-            <label>
-              {isNew
-                ? "Password *"
-                : "New Password"}
-              <input
-                type="password"
-                value={draft.password}
-                onChange={event =>
-                  setDraft(current => ({
-                    ...current,
-                    password:
-                      event.target.value,
-                  }))}
-              />
-            </label>
+            {draft.role === "OfficeAdmin" && !isNew
+              ? <p className="muted">The OfficeAdmin password can only be changed by email verification from the sign-in page.</p>
+              : <label>
+                  {isNew ? "Password *" : "New Password"}
+                  <input type="password" value={draft.password}
+                    onChange={event => setDraft(current => ({ ...current, password: event.target.value }))} />
+                </label>}
 
             <label className="active-user-option">
               <input
@@ -2514,12 +2494,6 @@ function UserAdministrationDialog({
               />
               Active user
             </label>
-
-            {!isNew && <label className="active-user-option">
-              <input type="checkbox" checked={temporaryPassword}
-                onChange={event => setTemporaryPassword(event.target.checked)} />
-              Force password change at next login
-            </label>}
 
             {draft.role !== "OfficeAdmin" &&
               <div className="vessel-assignment-block">
@@ -2553,7 +2527,7 @@ function UserAdministrationDialog({
             <div className="service-request-actions">
               {!isNew && <button type="button" disabled={administrationBusy}
                 onClick={unlockUser}>Unlock</button>}
-              {!isNew && <button type="button" disabled={administrationBusy || draft.password.length < 8}
+              {!isNew && draft.role !== "OfficeAdmin" && <button type="button" disabled={administrationBusy || draft.password.length < 8}
                 onClick={resetPassword}>Reset Password</button>}
               <button
                 type="button"
@@ -2585,16 +2559,24 @@ function UserAdministrationDialog({
 
 function CreateVesselDialog({
   token,
+  vessels,
   onClose,
   onCreated,
 }: {
   token: string;
+  vessels: Vessel[];
   onClose: () => void;
   onCreated: (vessel: Vessel) => Promise<void>;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [created, setCreated] = useState<Vessel | null>(null);
+  const [sourceVesselId, setSourceVesselId] = useState("");
+  const [copyResult, setCopyResult] = useState<{
+    sourceCount: number;
+    added: number;
+    skipped: number;
+  } | null>(null);
   const [draft, setDraft] = useState({
     vesselName: "",
     imoNumber: "",
@@ -2641,15 +2623,79 @@ function CreateVesselDialog({
       );
 
       if (!response.ok) {
-        const body = await response.json().catch(() => null);
+        const responseText = await response.text();
+        let message = "";
+
+        if (responseText) {
+          try {
+            message = JSON.parse(responseText)?.message ?? "";
+          } catch {
+            message = responseText.trim();
+          }
+        }
+
         throw new Error(
-          body?.message ?? "Unable to create vessel.",
+          message ||
+          `Unable to create vessel (HTTP ${response.status}).`,
         );
       }
 
       const item: Vessel = await response.json();
       setCreated(item);
       await onCreated(item);
+    } catch (exception) {
+      setError((exception as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const sourceOptions = vessels.filter(
+    vessel => vessel.id !== created?.id,
+  );
+
+  async function copyEquipment() {
+    if (!created || !sourceVesselId) {
+      setError("Select a source vessel.");
+      return;
+    }
+
+    setBusy(true);
+    setError("");
+
+    try {
+      const response = await authFetch(
+        `${apiBaseUrl}/vessels/${created.id}/copy-equipment`,
+        token,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            sourceVesselId,
+            mode: 0,
+          }),
+        },
+      );
+
+      if (!response.ok) {
+        const responseText = await response.text();
+        let message = "";
+
+        if (responseText) {
+          try {
+            message = JSON.parse(responseText)?.message ?? "";
+          } catch {
+            message = responseText.trim();
+          }
+        }
+
+        throw new Error(
+          message ||
+          `Unable to copy equipment (HTTP ${response.status}).`,
+        );
+      }
+
+      setCopyResult(await response.json());
     } catch (exception) {
       setError((exception as Error).message);
     } finally {
@@ -2673,18 +2719,76 @@ function CreateVesselDialog({
 
         {error && <div className="error">{error}</div>}
 
-        {created ? <div className="activation-code-panel">
-          <h3>Activation Code</h3>
-          <code>{created.activationCode}</code>
-          <button className="primary" onClick={() =>
-            navigator.clipboard.writeText(created.activationCode ?? "")}>
-            Copy
-          </button>
-          <p>This one-time code expires in 7 days.</p>
-          <div className="service-request-actions">
-            <button type="button" onClick={onClose}>Finish</button>
+        {created ? <>
+          <div className="activation-code-panel">
+            <h3>Activation Code</h3>
+            <code>{created.activationCode}</code>
+            <button className="primary" onClick={() =>
+              navigator.clipboard.writeText(created.activationCode ?? "")}>
+              Copy
+            </button>
+            <p>This one-time code expires in 7 days.</p>
           </div>
-        </div> : <>
+
+          <section className="copy-equipment-form">
+            <h3>Copy Equipment List</h3>
+            <p className="muted">
+              Optionally initialize the new vessel from an existing vessel.
+            </p>
+
+            {copyResult
+              ? <div className="notice">
+                  Equipment copied: {copyResult.added} added,
+                  {" "}{copyResult.skipped} skipped from
+                  {" "}{copyResult.sourceCount} source positions.
+                </div>
+              : sourceOptions.length === 0
+                ? <div className="empty-state">
+                    No other vessels are available as a source.
+                  </div>
+                : <>
+                    <label>
+                      Source Vessel *
+                      <select
+                        value={sourceVesselId}
+                        onChange={event =>
+                          setSourceVesselId(event.target.value)}
+                      >
+                        <option value="">Select vessel...</option>
+                        {sourceOptions.map(vessel => (
+                          <option key={vessel.id} value={vessel.id}>
+                            {vessel.vesselName}
+                            {" · "}IMO {vessel.imoNumber}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+
+                    <div className="copy-fields-note">
+                      <strong>Copied:</strong> Category, Equipment Name,
+                      Maker, Model and Inspection By.
+                      <br />
+                      <strong>Not copied:</strong> Quantity, Serial Number,
+                      Expiry Date, Remarks, Reports and Certificates.
+                    </div>
+
+                    <button
+                      type="button"
+                      className="primary"
+                      disabled={busy || !sourceVesselId}
+                      onClick={copyEquipment}
+                    >
+                      {busy ? "Copying..." : "Copy Equipment"}
+                    </button>
+                  </>}
+          </section>
+
+          <div className="service-request-actions">
+            <button type="button" disabled={busy} onClick={onClose}>
+              Finish
+            </button>
+          </div>
+        </> : <>
 
         <div className="vessel-profile-form">
           <label>
@@ -2878,12 +2982,20 @@ function VesselProfileDialog({
       );
 
       if (!response.ok) {
-        const body =
-          await response.json().catch(() => null);
+        const responseText = await response.text();
+        let message = "";
+
+        if (responseText) {
+          try {
+            message = JSON.parse(responseText)?.message ?? "";
+          } catch {
+            message = responseText.trim();
+          }
+        }
 
         throw new Error(
-          body?.message ??
-          "Unable to save Vessel Profile.",
+          message ||
+          `Unable to save Vessel Profile (HTTP ${response.status}).`,
         );
       }
 
@@ -4312,6 +4424,9 @@ function MedicineDialog({ token, vessel, onClose }: {
   const [items, setItems] = useState<MedicineItem[]>([]);
   const [configuration, setConfiguration] = useState({ categoryAEnabled: false, categoryBEnabled: false, dangerousGoodsEnabled: false, warningDays: 60 });
   const [message, setMessage] = useState("");
+  const [panel, setPanel] = useState<"register" | "add" | "settings" | "import">("register");
+  const [filter, setFilter] = useState<"All" | "A" | "B" | "Dangerous Goods" | "Missing" | "Expiring">("All");
+  const [search, setSearch] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState<{ item: string; action: string }[]>([]);
   const [draft, setDraft] = useState({ itemName: "", formStrength: "", requiredQuantity: 0, actualQuantity: 0, unit: "", batchNumber: "", expiryDate: "", storageLocation: "", medicalCategory: "B", isDangerousGoods: false, replacementRequired: false, remarks: "" });
@@ -4329,9 +4444,13 @@ function MedicineDialog({ token, vessel, onClose }: {
   async function addItem() {
     const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine/items`, token, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ...draft, isActive: true, isStandardTemplateItem: false, expiryDate: draft.expiryDate || null }) });
     if (!response.ok) { const body = await response.json().catch(() => ({})); throw new Error(body.message || "Medicine item could not be added."); }
-    setDraft({ ...draft, itemName: "", formStrength: "", unit: "", batchNumber: "", expiryDate: "", remarks: "" }); await load();
+    setDraft({ ...draft, itemName: "", formStrength: "", unit: "", batchNumber: "", expiryDate: "", remarks: "" });
+    setPanel("register");
+    setMessage("Medicine item added.");
+    await load();
   }
   async function deactivate(item: MedicineItem) {
+    if (!window.confirm(`Remove ${item.itemName} from the active Medicine Chest list?`)) return;
     const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine/items/${item.id}`, token, { method: "DELETE" });
     if (!response.ok) throw new Error("Medicine item could not be removed."); await load();
   }
@@ -4343,29 +4462,75 @@ function MedicineDialog({ token, vessel, onClose }: {
     if (!file) return; const body = new FormData(); body.append("file", file);
     const response = await authFetch(`${apiBaseUrl}/vessels/${vessel.id}/medicine/import?apply=${apply}&overwriteActual=false`, token, { method: "POST", body });
     const result = await response.json(); if (!response.ok) throw new Error(result.message || "Template validation failed.");
-    if (apply) { setPreview([]); setMessage(`${result.imported} template rows imported without overwriting onboard quantities.`); await load(); } else setPreview(result.preview);
+    if (apply) { setPreview([]); setPanel("register"); setMessage(`${result.imported} template rows imported without overwriting onboard quantities.`); await load(); } else setPreview(result.preview);
   }
   const act = (operation: () => Promise<void>) => operation().catch(e => setMessage(e.message));
-  return <div className="modal-backdrop"><div className="modal-card wide-modal">
+
+  const filteredItems = items.filter(item => {
+    const text = `${item.itemName} ${item.formStrength ?? ""} ${item.batchNumber ?? ""} ${item.storageLocation ?? ""}`.toLowerCase();
+    if (search.trim() && !text.includes(search.trim().toLowerCase())) return false;
+    if (filter === "A") return !item.isDangerousGoods && item.medicalCategory === "A";
+    if (filter === "B") return !item.isDangerousGoods && item.medicalCategory === "B";
+    if (filter === "Dangerous Goods") return item.isDangerousGoods;
+    if (filter === "Missing") return item.status === "Missing";
+    if (filter === "Expiring") return item.status === "Soon" || item.status.includes("Overdue") || item.status.includes("Expired");
+    return true;
+  });
+
+  const missingCount = items.filter(item => item.status === "Missing").length;
+  const attentionCount = items.filter(item => item.status === "Soon" || item.status.includes("Overdue") || item.status.includes("Expired")).length;
+
+  return <div className="modal-backdrop"><div className="modal-card wide-modal medicine-dialog">
     <div className="modal-header"><div><h2>Medicine Chest</h2><p>{vessel.vesselName} · IMO {vessel.imoNumber}</p></div><button onClick={onClose}>Close</button></div>
     {message && <div className="notice">{message}</div>}
-    <section><h3>Vessel configuration</h3><div className="form-grid">
+
+    <div className="medicine-summary">
+      <div><strong>{items.length}</strong><span>Active items</span></div>
+      <div className={missingCount ? "attention" : ""}><strong>{missingCount}</strong><span>Missing quantity</span></div>
+      <div className={attentionCount ? "attention" : ""}><strong>{attentionCount}</strong><span>Expiry attention</span></div>
+      <div><strong>{configuration.warningDays}</strong><span>Warning days</span></div>
+    </div>
+
+    <nav className="medicine-navigation" aria-label="Medicine Chest sections">
+      <button className={panel === "register" ? "selected" : ""} onClick={() => setPanel("register")}>Register</button>
+      <button className={panel === "add" ? "selected primary" : ""} onClick={() => setPanel("add")}>Add item</button>
+      <button className={panel === "settings" ? "selected" : ""} onClick={() => setPanel("settings")}>Settings</button>
+      <button className={panel === "import" ? "selected" : ""} onClick={() => setPanel("import")}>Import list</button>
+    </nav>
+
+    {panel === "register" && <section className="medicine-register">
+      <div className="medicine-toolbar">
+        <input aria-label="Search medicine" placeholder="Search medicine, batch or location..." value={search} onChange={e => setSearch(e.target.value)} />
+        <button onClick={() => act(() => download("export"))}>Export register</button>
+        <button className="primary" onClick={() => act(() => download("replenishment"))}>Replenishment XLSX</button>
+      </div>
+      <div className="medicine-filters">
+        {(["All", "A", "B", "Dangerous Goods", "Missing", "Expiring"] as const).map(value =>
+          <button key={value} className={filter === value ? "selected" : ""} onClick={() => setFilter(value)}>{value}</button>)}
+      </div>
+      {filteredItems.length === 0
+        ? <div className="empty-state">No medicine items match this view.</div>
+        : <div className="table-scroll"><table><thead><tr><th>Item</th><th>List</th><th>Required</th><th>Actual</th><th>Batch</th><th>Expiry</th><th>Status</th><th></th></tr></thead><tbody>{filteredItems.map(item => <tr key={item.id}><td><strong>{item.itemName}</strong><small>{item.formStrength}</small></td><td>{item.isDangerousGoods ? "Dangerous Goods" : `Category ${item.medicalCategory || "—"}`}</td><td>{item.requiredQuantity} {item.unit}</td><td>{item.actualQuantity} {item.unit}</td><td>{item.batchNumber || "—"}</td><td>{formatDate(item.expiryDate)}</td><td><span className={`status medicine-status-${item.status.toLowerCase().replace(/[^a-z]+/g, "-")}`}>{item.status}</span></td><td><button className="danger" onClick={() => act(() => deactivate(item))}>{item.isStandardTemplateItem ? "Deactivate" : "Remove"}</button></td></tr>)}</tbody></table></div>}
+    </section>}
+
+    {panel === "add" && <section><div className="section-heading"><div><h3>Add medicine or instrument</h3><p className="muted">Enter the onboard quantity, required quantity and expiry information.</p></div><button onClick={() => setPanel("register")}>Cancel</button></div><div className="form-grid">
+      <label>English item name *<input autoFocus value={draft.itemName} onChange={e => setDraft({ ...draft, itemName: e.target.value })} /></label><label>Form / strength<input value={draft.formStrength} onChange={e => setDraft({ ...draft, formStrength: e.target.value })} /></label>
+      <label>Unit *<input placeholder="pcs, packs, bottles..." value={draft.unit} onChange={e => setDraft({ ...draft, unit: e.target.value })} /></label><label>List<select value={draft.isDangerousGoods ? "DG" : draft.medicalCategory} onChange={e => setDraft({ ...draft, isDangerousGoods: e.target.value === "DG", medicalCategory: e.target.value === "DG" ? draft.medicalCategory : e.target.value })}><option value="A">Category A</option><option value="B">Category B</option><option value="DG">Dangerous Goods</option></select></label>
+      <label>Required quantity<input type="number" min="0" value={draft.requiredQuantity} onChange={e => setDraft({ ...draft, requiredQuantity: Number(e.target.value) })} /></label><label>Actual onboard quantity<input type="number" min="0" value={draft.actualQuantity} onChange={e => setDraft({ ...draft, actualQuantity: Number(e.target.value) })} /></label>
+      <label>Batch number<input value={draft.batchNumber} onChange={e => setDraft({ ...draft, batchNumber: e.target.value })} /></label><label>Expiry date<input type="date" value={draft.expiryDate} onChange={e => setDraft({ ...draft, expiryDate: e.target.value })} /></label>
+      <label>Storage location<input value={draft.storageLocation} onChange={e => setDraft({ ...draft, storageLocation: e.target.value })} /></label><label>Remarks<input value={draft.remarks} onChange={e => setDraft({ ...draft, remarks: e.target.value })} /></label>
+      <label><input type="checkbox" checked={draft.replacementRequired} onChange={e => setDraft({ ...draft, replacementRequired: e.target.checked })} /> Replacement required</label>
+    </div><div className="service-request-actions"><button onClick={() => setPanel("register")}>Cancel</button><button className="primary" disabled={!draft.itemName.trim() || !draft.unit.trim()} onClick={() => act(addItem)}>Save item</button></div></section>}
+
+    {panel === "settings" && <section><div className="section-heading"><div><h3>Vessel medicine requirements</h3><p className="muted">Select the lists applicable to this vessel.</p></div><button onClick={() => setPanel("register")}>Cancel</button></div><div className="medicine-settings">
       {(["categoryAEnabled", "categoryBEnabled", "dangerousGoodsEnabled"] as const).map((key) => <label key={key}><input type="checkbox" checked={configuration[key]} onChange={e => setConfiguration({ ...configuration, [key]: e.target.checked })} /> {key === "categoryAEnabled" ? "Category A" : key === "categoryBEnabled" ? "Category B" : "Dangerous Goods"}</label>)}
       <label>Expiry warning days<input type="number" min="0" max="730" value={configuration.warningDays} onChange={e => setConfiguration({ ...configuration, warningDays: Number(e.target.value) })} /></label>
-    </div><button onClick={() => act(() => saveConfiguration())}>Save configuration</button></section>
-    <section><h3>Add company-specific item</h3><div className="form-grid">
-      <label>English item name<input value={draft.itemName} onChange={e => setDraft({ ...draft, itemName: e.target.value })} /></label><label>Form / strength<input value={draft.formStrength} onChange={e => setDraft({ ...draft, formStrength: e.target.value })} /></label>
-      <label>Required quantity<input type="number" min="0" value={draft.requiredQuantity} onChange={e => setDraft({ ...draft, requiredQuantity: Number(e.target.value) })} /></label><label>Actual quantity<input type="number" min="0" value={draft.actualQuantity} onChange={e => setDraft({ ...draft, actualQuantity: Number(e.target.value) })} /></label>
-      <label>Unit<input value={draft.unit} onChange={e => setDraft({ ...draft, unit: e.target.value })} /></label><label>Batch number<input value={draft.batchNumber} onChange={e => setDraft({ ...draft, batchNumber: e.target.value })} /></label>
-      <label>Expiry date<input type="date" value={draft.expiryDate} onChange={e => setDraft({ ...draft, expiryDate: e.target.value })} /></label><label>Storage location<input value={draft.storageLocation} onChange={e => setDraft({ ...draft, storageLocation: e.target.value })} /></label>
-      <label>Category<select value={draft.medicalCategory} onChange={e => setDraft({ ...draft, medicalCategory: e.target.value })}><option>A</option><option>B</option></select></label><label><input type="checkbox" checked={draft.isDangerousGoods} onChange={e => setDraft({ ...draft, isDangerousGoods: e.target.checked })} /> Dangerous Goods list</label>
-      <label><input type="checkbox" checked={draft.replacementRequired} onChange={e => setDraft({ ...draft, replacementRequired: e.target.checked })} /> Replacement required</label><label>Remarks<input value={draft.remarks} onChange={e => setDraft({ ...draft, remarks: e.target.value })} /></label>
-    </div><button className="primary" disabled={!draft.itemName.trim() || !draft.unit.trim()} onClick={() => act(addItem)}>Add item</button></section>
-    <section><div className="workspace-actions"><h3>Register</h3><button onClick={() => act(() => download("export"))}>Export register</button><button onClick={() => act(() => download("replenishment"))}>Replenishment XLSX</button></div>
-      <div className="table-scroll"><table><thead><tr><th>Item</th><th>List</th><th>Required</th><th>Actual</th><th>Batch</th><th>Expiry</th><th>Status</th><th></th></tr></thead><tbody>{items.map(item => <tr key={item.id}><td>{item.itemName}<small>{item.formStrength}</small></td><td>{item.isDangerousGoods ? "Dangerous Goods" : `Category ${item.medicalCategory || "—"}`}</td><td>{item.requiredQuantity} {item.unit}</td><td>{item.actualQuantity} {item.unit}</td><td>{item.batchNumber || "—"}</td><td>{formatDate(item.expiryDate)}</td><td><span className={`status ${item.status.toLowerCase().replace(/ /g, "-")}`}>{item.status}</span></td><td><button onClick={() => act(() => deactivate(item))}>{item.isStandardTemplateItem ? "Deactivate" : "Remove"}</button></td></tr>)}</tbody></table></div>
-    </section>
-    <section><h3>Approved template import</h3><p className="muted">No regulatory list is bundled. Import an approved Excel or CSV template; preview is mandatory and actual quantities are preserved.</p><input type="file" accept=".xlsx,.csv" onChange={e => { setFile(e.target.files?.[0] || null); setPreview([]); }} /><button disabled={!file} onClick={() => act(() => importTemplate(false))}>Preview import</button>{preview.length > 0 && <><ul>{preview.map((x, i) => <li key={i}>{x.item}: {x.action}</li>)}</ul><button className="primary" onClick={() => act(() => importTemplate(true))}>Apply approved template</button></>}
-    </section>
+    </div><div className="service-request-actions"><button onClick={() => setPanel("register")}>Cancel</button><button className="primary" onClick={() => act(async () => { await saveConfiguration(); setPanel("register"); })}>Save settings</button></div></section>}
+
+    {panel === "import" && <section><div className="section-heading"><div><h3>Import approved list</h3><p className="muted">Upload an approved Excel or CSV template. Existing onboard quantities will not be overwritten.</p></div><button onClick={() => setPanel("register")}>Cancel</button></div><div className="medicine-import">
+      <input type="file" accept=".xlsx,.csv" onChange={e => { setFile(e.target.files?.[0] || null); setPreview([]); }} />
+      <button disabled={!file} onClick={() => act(() => importTemplate(false))}>Preview import</button>
+    </div>{preview.length > 0 && <div className="import-preview"><h4>Preview ({preview.length} rows)</h4><ul>{preview.map((x, i) => <li key={i}>{x.item}: {x.action}</li>)}</ul><button className="primary" onClick={() => act(() => importTemplate(true))}>Apply approved template</button></div>}</section>}
   </div></div>;
 }
 
