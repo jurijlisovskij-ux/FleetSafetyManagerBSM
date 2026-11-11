@@ -21,7 +21,7 @@ class PreviewTest(unittest.TestCase):
             CREATE TABLE user_vessels (UserId, VesselId, IsDeleted);
             CREATE TABLE equipment (Id, VesselId, EquipmentName, Maker, Model, SerialNumber, Quantity, ExpiryDate,
                 Responsible, Remarks, Category, InspectionBy, CurrentReportPath, CurrentReportFileName,
-                CurrentCertificatePath, CurrentCertificateFileName, IsDeleted);
+                CurrentCertificatePath, CurrentCertificateFileName, IsDeleted, LastModifiedUtc);
             """)
             salt = bytes(range(16))
             digest = hashlib.pbkdf2_hmac("sha256", b"test password", salt, 100_000)
@@ -34,7 +34,7 @@ class PreviewTest(unittest.TestCase):
                 db.execute("INSERT INTO vessels VALUES (?,?,?,NULL,NULL,NULL,NULL,0)", (vid, name, imo))
             db.execute("INSERT INTO user_vessels VALUES ('super',?,0)", (a,))
             db.execute("""INSERT INTO equipment VALUES ('e',?,'VHF',NULL,NULL,NULL,1,?,
-                NULL,NULL,'RadioAndNavigation','Crew',NULL,NULL,NULL,NULL,0)""",
+                NULL,NULL,'RadioAndNavigation','Crew',NULL,NULL,NULL,NULL,0,NULL)""",
                        (a, (date.today() - timedelta(days=2)).isoformat()))
             db.commit()
             db.close()
@@ -60,6 +60,25 @@ class PreviewTest(unittest.TestCase):
                              "Radio & Navigation")
             self.assertEqual(ship.request("POST", f"/api/vessels/{a}/equipment", crew)[0], 501)
             self.assertEqual(path.read_bytes(), before)
+            writer = Preview(path, "Office", writable=True)
+            token = sign_in(writer, "super")
+            register = f"/api/vessels/{a}/equipment"
+            draft = dict(equipmentName=" Fire extinguisher ", quantity=2, category=1,
+                         inspectionBy=1, expiryDate="2099-01-01")
+            self.assertEqual(writer.request("POST", f"/api/vessels/{b}/equipment", token, draft)[0], 403)
+            self.assertEqual(writer.request("POST", register, token, dict(draft, expiryDate="2026-02-30"))[0], 400)
+            code, saved = writer.request("POST", register, token, draft)
+            self.assertEqual((code, saved["equipmentName"], saved["inspectionBy"]),
+                             (201, "Fire extinguisher", "Service Company"))
+            detail = f"{register}/{saved['id'].lower()}"
+            self.assertEqual(writer.request("PUT", detail, token, dict(draft, quantity=3))[0], 200)
+            self.assertEqual(writer.request("PUT", f"{register}/{uuid4()}", token, draft)[0], 404)
+            reopened = Preview(path, "Office")
+            rows = reopened.request("GET", register, sign_in(reopened, "super"))[1]
+            self.assertEqual(next(x["quantity"] for x in rows if x["id"] == saved["id"]), 3)
+            with sqlite3.connect(path) as db:
+                self.assertTrue(db.execute("SELECT LastModifiedUtc FROM equipment WHERE Id=?",
+                                           (saved["id"],)).fetchone()[0])
 
 
 if __name__ == "__main__":
